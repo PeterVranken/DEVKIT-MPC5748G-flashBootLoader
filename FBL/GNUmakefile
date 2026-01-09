@@ -6,7 +6,7 @@
 # Help on the syntax of this makefile is got at
 # http://www.gnu.org/software/make/manual/make.pdf.
 #
-# Copyright (C) 2012-2024 Peter Vranken (mailto:Peter_Vranken@Yahoo.de)
+# Copyright (C) 2012-2026 Peter Vranken (mailto:Peter_Vranken@Yahoo.de)
 #
 # This program is free software: you can redistribute it and/or modify it
 # under the terms of the GNU Lesser General Public License as published by the
@@ -52,7 +52,7 @@
 #
 
 # The name of the project is used for several build products.
-project := DEVKIT-MPC5748G-CAN
+project := DEVKIT-MPC5748G-FBL
 
 # Specify a blank separated list of directories holding source files. The directories are
 # searched recursively for C/C++ and assembler source files.
