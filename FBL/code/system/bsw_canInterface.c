@@ -3,7 +3,7 @@
  * Interface for CAN communication, using the technology from the comFramework project
  * (http://sourceforge.net/p/comframe/wiki/).
  *
- * Copyright (C) 2022 Peter Vranken (mailto:Peter_Vranken@Yahoo.de)
+ * Copyright (C) 2022-2026 Peter Vranken (mailto:Peter_Vranken@Yahoo.de)
  *
  * This program is free software: you can redistribute it and/or modify it
  * under the terms of the GNU Lesser General Public License as published by the
@@ -40,6 +40,7 @@
 #include "vsq_dispatcherPortInterface.h"
 #include "ede_eventSender.h"
 #include "bsw_basicSoftware.h"
+#include "ccp_taskCcp.h"
 
 /*
  * Defines
@@ -123,24 +124,34 @@ _Static_assert( BSW_CAN_BUS_0 + 1u == cdr_canDev_noCANDevicesEnabled
  */
 void bsw_osOnRxCan(const bsw_rxCanMessage_t *pRxCanMsg)
 {
-    /* Having the CAN interface handle of the received message, we can post a message-received
-       event to the interfacing event queue. */
-    const ede_kindOfEvent_t kindOfEvent = pRxCanMsg->idxCanBus;
-    assert(kindOfEvent <= BSW_CAN_BUS_0);
-    const bool success = ede_postEvent( _hEventSender
-                                      , kindOfEvent
-                                      , /* senderHandleEvent */ pRxCanMsg->idxMailbox
-                                      , /* pData */ pRxCanMsg->payload
-                                      , /* sizeOfData */ pRxCanMsg->sizeOfPayload
-                                      );
-    if(!success)
+    bool queueFull;
+    
+    /* The CCP CRO message is processed internally to the system. We do not deliver it to
+       the common CAN API but directly send it to the CCP task. The filter function returns
+       true if it recognizes the message as CCP related. It has consumed the mesasge in
+       this case. Otherwise, we go the normal way of dispatching CAN messages. */
+    if(!ccp_osFilterForCcpMsg(&queueFull, pRxCanMsg))
+    {
+        /* Having the CAN interface handle of the received message, we can post a
+           message-received event to the interfacing event queue. */
+        const ede_kindOfEvent_t kindOfEvent = pRxCanMsg->idxCanBus;
+        assert(kindOfEvent <= BSW_CAN_BUS_0);
+        queueFull = !ede_postEvent( _hEventSender
+                                  , kindOfEvent
+                                  , /* senderHandleEvent */ pRxCanMsg->idxMailbox
+                                  , /* pData */ pRxCanMsg->payload
+                                  , /* sizeOfData */ pRxCanMsg->sizeOfPayload
+                                  );
+    } /* if(CCP or normal CAN message?) */
+    
+    if(queueFull)
     {
         /* Count all received messages, which are lost because of queue full. */
         const unsigned long newVal = bsw_noEvCanRxQueueFull + 1;
         if(newVal != 0)
             bsw_noEvCanRxQueueFull = newVal;
     }
-
+    
     /* Count all received messages. This counter is not saturated. */
     ++ bsw_noCanRxMsgs;
 

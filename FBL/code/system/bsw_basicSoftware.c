@@ -7,7 +7,7 @@
  * supervisor mode and has the highest quality assurance level defined for the parts of the
  * aimed software.
  *
- * Copyright (C) 2020-2024 Peter Vranken (mailto:Peter_Vranken@Yahoo.de)
+ * Copyright (C) 2020-2026 Peter Vranken (mailto:Peter_Vranken@Yahoo.de)
  *
  * This program is free software: you can redistribute it and/or modify it
  * under the terms of the GNU Lesser General Public License as published by the
@@ -56,6 +56,7 @@
 #include "cdr_canDriverAPI.h"
 #include "pwm_pwmIODriver.h"
 #include "bsw_canInterface.h"
+#include "ccp_taskCcp.h"
 
 /*
  * Defines
@@ -92,16 +93,16 @@ _Static_assert( true
  * Local type definitions
  */
 
-/** The enumeration of all event processors, tasks and priorities, to have them as symbols in the
-    source code. Most relevant are the event processor IDs. Actually, these IDs are provided by the
-    RTOS at runtime, when creating the event processor. However, it is guaranteed that the IDs, which
-    are dealt out by rtos_osCreateEvent Processor() form the series 0, 1, 2, .... So we don't need
-    to have a dynamic storage of the IDs; we define them as constants and double-check by
-    assertion that we got the correct, expected IDs from rtos_osCreateEvent Processor(). Note, this
-    requires that the order of creating the event processors follows the order here in the
-    enumeration.\n
-      Here, we have the IDs of the created event processors. They occupy the index range starting
-    from zero. */
+/** The enumeration of all event processors, tasks and priorities, to have them as symbols
+    in the source code. Most relevant are the event processor IDs. Actually, these IDs are
+    provided by the RTOS at runtime, when creating the event processor. However, it is
+    guaranteed that the IDs, which are dealt out by rtos_osCreateEvent Processor() form the
+    series 0, 1, 2, .... So we don't need to have a dynamic storage of the IDs; we define
+    them as constants and double-check by assertion that we got the correct, expected IDs
+    from rtos_osCreateEvent Processor(). Note, this requires that the order of creating the
+    event processors follows the order here in the enumeration.\n
+      Here, we have the IDs of the created event processors. They occupy the index range
+    starting from zero. */
 enum
 {
     /** Event processor raising regular timer event to clock regular 1ms tasks. */
@@ -116,25 +117,30 @@ enum
     /** Event processor raising regular timer event to clock regular 1s tasks. */
     idEvProc1000ms,
 
+    /** Event processor raising a CAN Rx event on reception of a CCP CRO message. And, as
+        fallback a regular 1-ms-timer event. */
+    idEvProcRxCcp,
+
     /** The number of event processors to register. */
     noRegisteredEvProcs
 };
+_Static_assert(CCP_ID_EV_PROC_RX_CRO == idEvProcRxCcp, "Inconsistency in public interface");
 
 
 /** The RTOS uses constant priorities for its event processors, which are defined here.\n
-      Note, the priority is a property of an event processor rather than of a task. A task implicitly
-    inherits the priority of the event processor it is associated with. */
+      Note, the priority is a property of an event processor rather than of a task. A task
+    implicitly inherits the priority of the event processor it is associated with. */
 enum
 {
     prioEv1000ms = 1,
     prioEv100ms,
     prioEv10ms,
     prioEv1ms,
+    prioEvRxCcp,
 
     prioHighestForApplTasks = prioEv1ms,
 };
 _Static_assert(BSW_PRIO_USER_TASK_10MS == prioEv10ms, "Inconsistency in public interface");
-
 
 /*
  * Local prototypes
@@ -179,7 +185,7 @@ static void cbOnCANRx( unsigned int idxCanBus
                      , const uint8_t payload[8]
                      )
 {
-    /* The callback into a user process can take only a single (pojnter) argument. We need
+    /* The callback into a user process can take only a single (pointer) argument. We need
        to pack all information into a struct so that we can provide its address to the user
        code. This pointer operation is uncritical with respect to our safety concept since
        the user code only needs read access. We can simply put the stuct here on our
@@ -341,6 +347,14 @@ int /* _Noreturn */ main(int noArgs ATTRIB_DBG_ONLY, const char *argAry[] ATTRIB
         assert(false);
     }
 
+    /** Initialize the CCP protocol implementation. This step depends on the CAN driver CDR
+        and must come after cdr_osInitCanDriver(). */
+    if(!ccp_osInitCcpTask())
+    {
+        initOk = false;
+        assert(false);
+    }
+
     /* Initialize the PWM driver. */
     pwm_osInitIODriver();
 
@@ -398,6 +412,7 @@ int /* _Noreturn */ main(int noArgs ATTRIB_DBG_ONLY, const char *argAry[] ATTRIB
        in the right order and this requires in practice a double-check by assertion - later
        maintenance errors are unavoidable otherwise. */
     unsigned int idEvProc;
+#if 0 /* obsolete */
     #define CREATE_REGULAR_EVENT(tiInMs, tiFirstInMs)                                       \
     {                                                                                       \
         if(initOk                                                                           \
@@ -419,6 +434,44 @@ int /* _Noreturn */ main(int noArgs ATTRIB_DBG_ONLY, const char *argAry[] ATTRIB
             assert(idEvProc == idEvProc##tiInMs##ms);                                       \
                                                                                             \
     } /* CREATE_REGULAR_EVENT */
+#endif
+
+    #define NEW_EV_PROC(idEv, prio, tiInMs, tiFirstInMs, useCountable, taskParam)           \
+    {                                                                                       \
+        if(initOk                                                                           \
+           && rtos_osCreateEventProcessor                                                   \
+                    ( &idEvProc                                                             \
+                    , /* tiCycleInMs */              (tiInMs)                               \
+                    , /* tiFirstActivationInMs */    (tiFirstInMs)                          \
+                    , /* priority */                 (prio)                                 \
+                    , /* minPIDToTriggerThisEvent */ RTOS_EVENT_PROC_NOT_USER_TRIGGERABLE   \
+                    , /* timerUsesCountableEvents */ (useCountable)                         \
+                    , /* timerTaskTriggerParam */    (taskParam)                            \
+                    )                                                                       \
+           != rtos_err_noError                                                              \
+          )                                                                                 \
+        {                                                                                   \
+            initOk = false;                                                                 \
+        }                                                                                   \
+        else                                                                                \
+            assert(idEvProc == (idEv));                                                     \
+                                                                                            \
+    } /* NEW_EV_PROC */
+
+    #define CREATE_REGULAR_EV_PROC(evName, tiInMs, tiFirstInMs)                             \
+                NEW_EV_PROC(idEvProc##evName, prioEv##evName, tiInMs, tiFirstInMs, false, 0u)
+
+    #define CREATE_REGULAR_COUNTABLE_EV_PROC(evName, tiInMs, tiFirstInMs, mask)             \
+                NEW_EV_PROC(idEvProc##evName, prioEv##evName, tiInMs, tiFirstInMs, true, mask)
+
+    #define CREATE_EV_PROC(evName)                                                          \
+                NEW_EV_PROC( idEvProc##evName                                               \
+                           , prioEv##evName                                                 \
+                           , /*tiInMs*/ 0                                                   \
+                           , /*tiFirstInMs*/ 0                                              \
+                           , /*useCountable*/ false                                         \
+                           , /*taskParam*/ 0u                                               \
+                           )
 
     #define CREATE_USER_TASK(idEvProc, pid, taskFct)                                        \
         CREATE_TASK(rtos_osRegisterUserTask( (idEvProc)                                     \
@@ -436,13 +489,19 @@ int /* _Noreturn */ main(int noArgs ATTRIB_DBG_ONLY, const char *argAry[] ATTRIB
             initOk = false;                                                                 \
     } /* CREATE_TASK */
 
-    CREATE_REGULAR_EVENT(/* tiInMs */ 1, /* tiFirstInMs */ 0)
-    CREATE_REGULAR_EVENT(/* tiInMs */ 10, /* tiFirstInMs */ 1)
-    CREATE_REGULAR_EVENT(/* tiInMs */ 100, /* tiFirstInMs */ 5)
-    CREATE_REGULAR_EVENT(/* tiInMs */ 1000, /* tiFirstInMs */ 55)
+    CREATE_REGULAR_EV_PROC(/*evName*/ 1ms, /*tiInMs*/ 1, /*tiFirstInMs*/ 0)
+    CREATE_REGULAR_EV_PROC(/*evName*/ 10ms, /*tiInMs*/ 10, /*tiFirstInMs*/ 1)
+    CREATE_REGULAR_EV_PROC(/*evName*/ 100ms, /*tiInMs*/ 100, /*tiFirstInMs*/ 5)
+    CREATE_REGULAR_EV_PROC(/*evName*/ 1000ms, /*tiInMs*/ 1000, /*tiFirstInMs*/ 55)
+    CREATE_REGULAR_COUNTABLE_EV_PROC( RxCcp
+                                    , /* tiInMs */ 1
+                                    , /* tiFirstInMs */ 0
+                                    , CCP_TASK_CCP_RX_CRO__MASK_EV_1MS
+                                    )
 
     /* OS task are created first. This ensures that they will get the CPU first if the
        event processor is shared with user tasks. */
+    CREATE_OS_TASK(idEvProcRxCcp, ccp_taskOsRxCcp)
     //CREATE_OS_TASK(idEvProc1ms, bsw_taskOs1ms)
     //CREATE_OS_TASK(idEvProc10ms, bsw_taskOs10ms)
     //CREATE_OS_TASK(idEvProc100ms, bsw_taskOs100ms)
@@ -455,6 +514,7 @@ int /* _Noreturn */ main(int noArgs ATTRIB_DBG_ONLY, const char *argAry[] ATTRIB
 
     /* User tasks in the QM process are created last. They will be served latest if the
        event processor is shared with OS or safety tasks. */
+// TODO User and safety task must not share the event processor of highest priority. This will allow locking the safety task of highest priority and bit breaks the safety concept
     CREATE_USER_TASK(idEvProc1ms, bsw_pidUser, bsw_taskUser1ms)
     CREATE_USER_TASK(idEvProc10ms, bsw_pidUser, bsw_taskUser10ms)
     CREATE_USER_TASK(idEvProc100ms, bsw_pidUser, bsw_taskUser100ms)

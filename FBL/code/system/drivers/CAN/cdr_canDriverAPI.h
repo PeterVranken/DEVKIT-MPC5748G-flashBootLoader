@@ -132,23 +132,24 @@ typedef enum cdr_enumCanDevice_t
 
 /** An enumeration of error codes, which can be returned by the API functions. */
 typedef enum cdr_errorAPI_t
-{ cdr_errApi_noError,                   /** Operation succeeded. */
-  cdr_errApi_warningRxOverflow,         /** Rx polling has skipped at least one message. */
-  cdr_errApi_rxMailboxEmpty,            /** Rx polling fails, no new data available. */
-  cdr_errApi_txMailboxBusy,             /** Can't send, Tx mailbox not flushed yet or is Rx. */
-  cdr_errApi_handleOutOfRange,          /** API called with either bad CAN device
-                                            enumeration value or invalid mailbox handle. */
-  cdr_errApi_fifoMailboxUsedForTx,
-  cdr_errApi_fifoMailboxRequiresNotification,
-  cdr_errApi_mailboxReconfigured,       /** A MB reservation can't be changed once done. */
-  cdr_errApi_badCanId,                  /** A CAN ID exceeds the 11 or 29 Bit. */
-  cdr_errApi_notificationWithoutIRQ,    /** Notification demanded for MB but IRW is not
-                                            enabled for the related MB group. */
-  cdr_errApi_pollingOfMailboxWithIRQ,
-  cdr_errApi_apiBufferIdxInvalid,       /** Configuration error: An API buffer has been
-                                            specified for a Tx mailbox. Or a bad index has
-                                            been specified for an Rx mailbox. */
-  cdr_errApi_dlcOutOfRange,
+{ 
+    cdr_errApi_noError,                 /**< Operation succeeded. */
+    cdr_errApi_warningRxOverflow,       /**< Rx polling has skipped at least one message. */
+    cdr_errApi_rxMailboxEmpty,          /**< Rx polling fails, no new data available. */
+    cdr_errApi_txMailboxBusy,           /**< Can't send, Tx mailbox not flushed yet or is Rx.*/
+    cdr_errApi_handleOutOfRange,        /**< API called with either bad CAN device
+                                             enumeration value or invalid mailbox handle. */
+    cdr_errApi_fifoMailboxUsedForTx,
+    cdr_errApi_fifoMailboxRequiresNotification,
+    cdr_errApi_mailboxReconfigured,     /**< A MB reservation can't be changed once done. */
+    cdr_errApi_badCanId,                /**< A CAN ID exceeds the 11 or 29 Bit. */
+    cdr_errApi_notificationWithoutIRQ,  /**< Notification demanded for MB but IRW is not
+                                             enabled for the related MB group. */
+    cdr_errApi_pollingOfMailboxWithIRQ,
+    cdr_errApi_apiBufferIdxInvalid,     /**< Configuration error: An API buffer has been
+                                             specified for a Tx mailbox. Or a bad index has
+                                             been specified for an Rx mailbox. */
+    cdr_errApi_dlcOutOfRange,
   
 } cdr_errorAPI_t;
 
