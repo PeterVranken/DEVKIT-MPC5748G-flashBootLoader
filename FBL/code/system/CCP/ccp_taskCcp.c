@@ -26,8 +26,11 @@
  *   discardCro
  *   finalizeDtoMsg
  *   onDisconnect
+ *   onSetMta
  *   onRxCroMsg
- *   ccpStackMain
+ *   onCanError
+ *   onClockTick
+ *   checkForAsyncEvents
  */
 
 /*
@@ -74,6 +77,7 @@
 enum ccpCmd_t
 {
     ccpCmd_connect = 0x01u,
+    ccpCmd_setMta = 0x02u,
     ccpCmd_disconnect = 0x07u,
 };
 
@@ -103,6 +107,8 @@ static struct ccpFsm_t
         ccp_stateFsm_connected, /**< Connected, waiting for next command. */
         ccp_stateFsm_erasing,   /**< CLEAR_MEMORY can't be answerd immediately, we are
                                      waiting for the flash driver. */
+        ccp_stateFsm_aborting,  /**< Closing session as sson as possible after errors. */
+
     } state;
 
     /** The CRO command message in progress. */
@@ -129,7 +135,21 @@ static struct ccpFsm_t
 
     } dtoMsg;
 
-    /** A input event of the FSM: Sending the DTO failed. A signal to close the session. */
+    /** The current value of the data pointer MTA0. */
+    uint32_t mta0;
+
+    /** An input event of the FSM: Error receivig a CRO message. A signal to close the
+        session. The asynchronity between event sender (a CAN ISR context) and receiver
+        (the CCP task) is handled by the counter pattern: The ISR is the owner and only
+        writer of this event counter and the CCP is owner and only writer of the
+        acknowledge counter. The difference of the two counters is the number of reported
+        events. */
+    volatile uint8_t canRxErrCnt;
+
+    /** See \a canRxErrCnt. */
+    uint8_t canRxErrAck;
+
+    /** An input event of the FSM: Sending the DTO failed. A signal to close the session. */
     bool canTxErr;
 
 } _ccpFsm;
@@ -138,6 +158,26 @@ static struct ccpFsm_t
 /*
  * Function implementation
  */
+
+/**
+ * Initialize or rset the finite state machine, which implements the CCP protocol.\n
+ *   This function can be used to abort the communication with the client in case of
+ * recognized protocol errors. The session is terminated (without feedback to the client)
+ * and a new session connect becomes possible.
+ */
+static void initFsm(void)
+{
+    _ccpFsm.state = ccp_stateFsm_idle;
+    _ccpFsm.dtoMsg.isResponseReady = false;
+    _ccpFsm.mta0 = 0u;
+    _ccpFsm.canTxErr = false;
+    _ccpFsm.canRxErrAck = _ccpFsm.canRxErrCnt;
+
+    MEMORY_BARRIER_FULL();
+    _ccpFsm.croMsg.isBufferFree = true;
+
+} /* initFsm */
+
 
 /**
  * Initialize the module. Needs to be called prior to the very first activation of the CCP
@@ -153,9 +193,8 @@ bool ccp_osInitCcpTask(void)
 {
     bool success = true;
 
-    _ccpFsm.state = ccp_stateFsm_idle;
-    _ccpFsm.croMsg.isBufferFree = true;
-    _ccpFsm.dtoMsg.isResponseReady = false;
+    _ccpFsm.canRxErrCnt = 0u;
+    initFsm();
 
     /* We register the CCP CRO message for reception. The APSW uses the registration API
        with mailboxes starting at index zero. We steal one mailbox by taking the very last
@@ -190,6 +229,7 @@ bool ccp_osInitCcpTask(void)
     return success;
 
 } /* ccp_osInitCcpTask */
+
 
 /**
  * Hand over the next CRO command message to the CCP task.
@@ -231,10 +271,14 @@ bool ccp_osFilterForCcpMsg( bool * const pMsgConsumed
             rtos_osSendEventCountable( CCP_ID_EV_PROC_RX_CRO
                                      , CCP_TASK_CCP_RX_CRO__MASK_EV_RX_CRO
                                      );
-// TODO We need some buffer overrun indication so that the CCP protocol state machine can close the session
         }
         else
+        {
+            /* Report a CAN communication error to the CCP task. This is a fatal situation
+               and a potentially open session will be closed. */
+            ++ _ccpFsm.canRxErrCnt;
             *pMsgConsumed = false;
+        }
 
         return true;
     }
@@ -306,14 +350,82 @@ static void onDisconnect(void)
         reponseCode = ccpCmdRespCode_paramOutOfRange;
 
     _ccpFsm.state = ccp_stateFsm_idle;
-    
+
     #if VERBOSE >= 1
     iprintf("Disconnected from client.\r\n");
     #endif
-    
+
     finalizeDtoMsg(reponseCode);
 
 } /* onDisconnect */
+
+
+// Move this to the flash ROM driver.
+/**
+ * Check if a memory address range is completely in the portion of the flash ROM, which is
+ * managed by the FBL.
+ *   @param[in] address
+ * The first address of the memory area.
+ *   @param[in] size
+ * The length of the memory range in Byte.
+ */
+static bool rom_isValidAddressRange(uint32_t address, uint32_t size)
+{
+    const uint32_t endAddr = address + size;
+
+    /* We can handle the overflow at the end of the ROM very easily, because the very last
+       address in the address space is in no way manageable flash ROM. Caution, this might
+       be different on other devices. */
+    if(endAddr < address)
+        return false;
+
+    return address >= 0x00FA0000u  &&  endAddr <= 0x01580000u;
+
+} /* rom_isValidAddressRange */
+
+
+/**
+ * The reaction on a received CCP SET_MTA command.
+ */
+static void onSetMta(void)
+{
+    /* Adress extension and MTA1 are not required or supported by the FBL. We reject such a
+       command with parameter out of range response. The same happens, if the address is
+       outside available flash ROM - this check is delegated to the flash ROM driver. */
+    const uint8_t addrExt = _ccpFsm.croMsg.payload[3];
+    const bool isMta0 = _ccpFsm.croMsg.payload[2] == 0u;
+    const uint32_t addr = ((((unsigned)_ccpFsm.croMsg.payload[4] << 8)
+                            | _ccpFsm.croMsg.payload[5]
+                           ) << 8
+                           | _ccpFsm.croMsg.payload[6]
+                          ) << 8
+                          | _ccpFsm.croMsg.payload[7];
+    const bool isValidAddr = addrExt == 0u  && rom_isValidAddressRange(addr, 1);
+
+    unsigned int reponseCode;
+    if(isMta0 && isValidAddr)
+    {
+        _ccpFsm.mta0 = addr;
+        #if VERBOSE >= 1
+        iprintf("Setting MTA0 to 0x%lX.\r\n", addr);
+        #endif
+        reponseCode = ccpCmdRespCode_noError;
+    }
+    else
+    {
+        #if VERBOSE >= 1
+        iprintf( "Setting MTA%u to 0x%lX.%u is rejected.\r\n"
+               , _ccpFsm.croMsg.payload[2]
+               , addr
+               , (unsigned)addrExt
+               );
+        #endif
+        reponseCode = ccpCmdRespCode_paramOutOfRange;
+    }
+
+    finalizeDtoMsg(reponseCode);
+
+} /* onSetMta */
 
 
 /**
@@ -328,12 +440,12 @@ static void onRxCroMsg(void)
            , (unsigned)_ccpFsm.croMsg.payload[0]
            );
     #endif
-    
+
     switch(_ccpFsm.state)
     {
     case ccp_stateFsm_idle:
         /* The only accepted CRO is the CONNECT command. We compare the station address to
-           see if it talks to us. It is a 16 Bit value, LSB fist*/
+           see if it talks to us. It is a 16 Bit value, LSB first. */
         if(_ccpFsm.croMsg.payload[0] == ccpCmd_connect)
         {
             const unsigned int wantedStationAddr = ((unsigned)_ccpFsm.croMsg.payload[3] << 8)
@@ -351,7 +463,8 @@ static void onRxCroMsg(void)
                 /* CCP CONNEXT relates to another ECU. We must not respond or change our
                    state. The CRO message is silently discarded. */
                 #if VERBOSE >= 1
-                iprintf( "CCP CONNECT with station 0x%04X is ignored. We are station %u.\r\n"
+                iprintf( "CCP CONNECT with station 0x%04X is ignored. We are station"
+                         " 0x%04X.\r\n"
                        , wantedStationAddr
                        , CCP_STATION_ADDR
                        );
@@ -369,11 +482,16 @@ static void onRxCroMsg(void)
     case ccp_stateFsm_connected:
         switch(_ccpFsm.croMsg.payload[0])
         {
-        case ccpCmd_disconnect /* DISCONNECT */:
+        case ccpCmd_disconnect:
             onDisconnect();
             break;
 
+        case ccpCmd_setMta:
+            onSetMta();
+            break;
+
         default:
+            // TODO Shall we abort the session? Likely yes, protocol error
             #if VERBOSE >= 2
             iprintf("Unsupported CCP CRO command %u received.\r\n", _ccpFsm.croMsg.payload[0]);
             #endif
@@ -383,6 +501,8 @@ static void onRxCroMsg(void)
 
     default:
         assert(false);
+    case ccp_stateFsm_aborting:
+        /* These other states ignore any incoming CRO message. */
         discardCro();
 
     } /* switch(Which state are we in?) */
@@ -390,22 +510,75 @@ static void onRxCroMsg(void)
 
 
 /**
- * Main clock tick of the CCP state machine. It checks for asynchronous and timer events.
+ * Process a CAN error event in the protocol state machine.
  */
-static void ccpStackMain(void)
+static void onCanError(void)
 {
-    /* A CAN transmission problem can't be healed. We close the session. (And remain silent
-       towards the client.) */
-    if(_ccpFsm.canTxErr)
+    /* CAN errors in state idel, when no CCP connection is active, are silently ignored. In
+       all other states, we terminate the session as sson as possible. We only wait for a
+       possibly running flash job to terminate. */
+    if(_ccpFsm.state != ccp_stateFsm_idle)
     {
-        _ccpFsm.dtoMsg.isResponseReady = false;
-        _ccpFsm.canTxErr = false;
-        _ccpFsm.state = ccp_stateFsm_idle;
-
-        MEMORY_BARRIER_FULL();
-        _ccpFsm.croMsg.isBufferFree = true;
+#if VERBOSE >= 1
+        iprintf("CCP session is aborted due to CAN Rx/Tx errors.\n");
+#endif
+        _ccpFsm.state = ccp_stateFsm_aborting;
     }
-} /* ccpStackMain */
+} /* onCanError */
+
+
+/**
+ * Timer event for the protocol state machine.
+ */
+static void onClockTick(void)
+{
+    switch(_ccpFsm.state)
+    {
+    case ccp_stateFsm_aborting:
+        // TODO Synchronization with flash FSM is required here. Wait for all jobs done.
+        /* Abort everything and return to state idle. */
+        initFsm();
+        break;
+
+    default:
+        assert(false);
+    case ccp_stateFsm_idle:
+    case ccp_stateFsm_connected:
+        /* Nothing to do on regular clock tick in these states. */
+        break;
+
+    } /* switch(Which state are we in?) */
+} /* onClockTick */
+
+
+/**
+ * Only CRO Rx events and regular timer clock tick events directly and immediately trigger
+ * an update of the CCP protocol state machine. Other events need to be checked on a
+ * regular base.\n
+ *   This function polls the flags, which indicate such asynchronous events; in the first
+ * place it are CAN transmission errors. If an event is detected, then the related handler
+ * is invoked. The concept is to call this function as often as reasonably possible.
+ */
+static void checkForAsyncEvents(void)
+{
+    /* Check for CAN Rx and Tx errors. Rx errors are set asynchronously from the CAN ISR,
+       Tx errors are set from the CCP task itself. (When trying to submit the DTO response
+       messages.)*/
+    const uint8_t canRxErrCnt = _ccpFsm.canRxErrCnt;
+    const bool canErr = canRxErrCnt != _ccpFsm.canRxErrAck  ||  _ccpFsm.canTxErr;
+    _ccpFsm.canRxErrAck = canRxErrCnt;
+    _ccpFsm.canTxErr = false;
+    
+    /* If we see a CAN error, then we call the related handler, which takes the state
+       dependent decision. */
+    if(canErr)
+    {
+#if VERBOSE >= 3
+        iprintf("State %u: CAN communication error.\n", (unsigned)_ccpFsm.state);
+#endif
+        onCanError();
+    }
+} /* checkForAsyncEvents */
 
 
 /**
@@ -435,7 +608,7 @@ void ccp_taskOsRxCcp(uint32_t taskParam)
 
 #if VERBOSE >= 1
     if((cnt1ms_ % 10000u) == 0u)
-        iprintf("%lus\r\n", cnt1ms_/1000u);
+        iprintf("CCP task %lus up and running\r\n", cnt1ms_/1000u);
 #endif
 
     /* Serve the CCP protocol for download of data and flashing only when the task was
@@ -447,7 +620,12 @@ void ccp_taskOsRxCcp(uint32_t taskParam)
     }
 
     if(noTimerTicks1ms > 0u)
-        ccpStackMain();
+    {
+        // TODO Could be done in any task activation
+        checkForAsyncEvents();
+        
+        onClockTick();
+    }
 
     if(_ccpFsm.dtoMsg.isResponseReady)
     {
@@ -462,8 +640,6 @@ void ccp_taskOsRxCcp(uint32_t taskParam)
             _ccpFsm.dtoMsg.isResponseReady = false;
         }
         else
-        {
             _ccpFsm.canTxErr = true;
-        }
     }
 } /* ccp_taskOSRxCcp */

@@ -461,7 +461,7 @@ static void isrRxFIFOFramesAvailable( CAN_Type * const pDevice
                                         >> CAN_FIFOID_ID_STD_SHIFT
                      ;
 
-    /* Copy received bytes into local buffer for callback invokation. We copy
+    /* Copy received bytes into local buffer for callback invocation. We copy
        unconditionally. Having conditional code or a byte loop would not save any time. */
     assert(DLC <= 8);
     uint32_t payload_u32[2];
