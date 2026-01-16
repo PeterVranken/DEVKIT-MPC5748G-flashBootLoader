@@ -21,14 +21,18 @@
 /* Module interface
  *   ccp_osInitCcpTask
  *   ccp_osFilterForCcpMsg
- *   ccp_taskOSRxCcp
+ *   ccp_taskOsRxCcp
  * Local functions
  *   discardCro
  *   finalizeDtoMsg
+ *   readU32FromCro
  *   onDisconnect
  *   onSetMta
+ *   submitClearMemory
+ *   onClearMemory
  *   onRxCroMsg
  *   onCanError
+ *   reSubmitCroCmd
  *   onClockTick
  *   checkForAsyncEvents
  */
@@ -52,6 +56,7 @@
 #include "rtos.h"
 #include "bsw_canInterface.h"
 #include "cdr_canDriverAPI.h"
+#include "rom_flashRom.h"
 
 /*
  * Defines
@@ -64,6 +69,28 @@
 /** Development support: Set verbosity. If not zero then more or less information is
     written to the console. Needs to be zero for productive use. */
 #define VERBOSE     2
+
+/** The maximum wait time between arrival of a CCP command and the flash ROM driver
+    returning to state idle (from a previous command). If this time elapses then the CCP
+    command reponds an error message and the flash procedure will normally fail and be
+    aborted.\n
+      Note, this time can be chosen rather short. Waiting for the flash driver occurs only
+    after program commands, becasue they are executed asynchronously. The long lasting
+    erase commands are execute synchronously with the CCP protocol flow and don't cause a
+    wait-of-idle of a subsequent command. */
+#define CCP_TI_MAX_WAIT_FLASH_DRV_BUSY_IN_MS        100u
+
+/** The maximum wait time for completion of an erase command in the flash ROM driver. This
+    timeout should be in the magnitude of 10s. */
+#define CCP_TI_MAX_WAIT_FLASH_DRV_ERASE_IN_MS       20000u
+
+/** The maximum wait time between an unexpected protocol error and the flash ROM driver
+    returning to state idle. Normally, we wait up to this this time before we finally abort
+    the current session. We want to see the flash ROM driver in idle when aborting, so that
+    we are again in the proper state of potentially starting a new session.\n
+      A CAN protocol error can occur at any time, also in the middle of  along lasting
+    flash erasure operation. Therefore this timeout should be in the magnitude of 10s. */
+#define CCP_TI_MAX_WAIT_ABORT_FLASH_DRV_BUSY_IN_MS  20000u
 
 /** A full memory barrier, which we use to ensure that the volatile data-valid flag is
     toggled only after all data processing has completed. */
@@ -79,6 +106,7 @@ enum ccpCmd_t
     ccpCmd_connect = 0x01u,
     ccpCmd_setMta = 0x02u,
     ccpCmd_disconnect = 0x07u,
+    ccpCmd_clearMemory = 0x10u,
 };
 
 /** The CCP command retun codes, which are in use. */
@@ -86,6 +114,7 @@ enum ccpCmdResponseCode_t
 {
     ccpCmdRespCode_noError = 0x00u,
     ccpCmdRespCode_paramOutOfRange = 0x32u,
+    ccpCmdRespCode_overload = 0x34u,
 };
 
 /*
@@ -105,6 +134,7 @@ static struct ccpFsm_t
     {
         ccp_stateFsm_idle,      /**< Not in a session, waiting for CONNECT. */
         ccp_stateFsm_connected, /**< Connected, waiting for next command. */
+        ccp_stateFsm_flashDrvBusy,  /**< Waiting for flash driver becoming available. */
         ccp_stateFsm_erasing,   /**< CLEAR_MEMORY can't be answerd immediately, we are
                                      waiting for the flash driver. */
         ccp_stateFsm_aborting,  /**< Closing session as sson as possible after errors. */
@@ -135,9 +165,18 @@ static struct ccpFsm_t
 
     } dtoMsg;
 
+    /** A down-counter for limiting time spans. Used as timeout in the states, where we
+        wait for the flash ROM driver to complete. */
+    uint32_t tiWait;
+    
     /** The current value of the data pointer MTA0. */
     uint32_t mta0;
 
+    /** Temporary storage of the number of bytes to erase or program. Use in case of
+        delayed submission of the command due to the flash ROM driver being temporarily
+        busy. */
+    uint32_t noBytesToEraseOrProgram;
+    
     /** An input event of the FSM: Error receivig a CRO message. A signal to close the
         session. The asynchronity between event sender (a CAN ISR context) and receiver
         (the CCP task) is handled by the counter pattern: The ISR is the owner and only
@@ -169,7 +208,9 @@ static void initFsm(void)
 {
     _ccpFsm.state = ccp_stateFsm_idle;
     _ccpFsm.dtoMsg.isResponseReady = false;
+    _ccpFsm.tiWait = 0u;
     _ccpFsm.mta0 = 0u;
+    _ccpFsm.noBytesToEraseOrProgram = 0u;
     _ccpFsm.canTxErr = false;
     _ccpFsm.canRxErrAck = _ccpFsm.canRxErrCnt;
 
@@ -329,6 +370,25 @@ static inline void finalizeDtoMsg(unsigned int cmdResponseCode)
 } /* finalizeDtoMsg */
 
 
+/** 
+ * Helper: Read a 32 Bit word from the payload of a CRO message.\n
+ *   The word is assumed to have big endian, MSB first.
+ *   @param[in] idxFirstByte
+ * The index of the MSB in the CRO's payload. Range is 2..4.
+ */
+static inline uint32_t readU32FromCro(unsigned int idxFirstByte)
+{
+    assert(idxFirstByte >= 2u  &&  idxFirstByte <= 4u);
+    return ((((uint32_t)_ccpFsm.croMsg.payload[idxFirstByte+0] << 8)
+             | _ccpFsm.croMsg.payload[idxFirstByte+1]
+            ) << 8
+            | _ccpFsm.croMsg.payload[idxFirstByte+2]
+           ) << 8
+           | _ccpFsm.croMsg.payload[idxFirstByte+3];
+
+} /* readU32FromCro */
+
+
 /**
  * The reaction on a received CCP DISCONNECT command.
  */
@@ -360,47 +420,18 @@ static void onDisconnect(void)
 } /* onDisconnect */
 
 
-// Move this to the flash ROM driver.
-/**
- * Check if a memory address range is completely in the portion of the flash ROM, which is
- * managed by the FBL.
- *   @param[in] address
- * The first address of the memory area.
- *   @param[in] size
- * The length of the memory range in Byte.
- */
-static bool rom_isValidAddressRange(uint32_t address, uint32_t size)
-{
-    const uint32_t endAddr = address + size;
-
-    /* We can handle the overflow at the end of the ROM very easily, because the very last
-       address in the address space is in no way manageable flash ROM. Caution, this might
-       be different on other devices. */
-    if(endAddr < address)
-        return false;
-
-    return address >= 0x00FA0000u  &&  endAddr <= 0x01580000u;
-
-} /* rom_isValidAddressRange */
-
-
 /**
  * The reaction on a received CCP SET_MTA command.
  */
 static void onSetMta(void)
 {
-    /* Adress extension and MTA1 are not required or supported by the FBL. We reject such a
+    /* Address extension and MTA1 are not required or supported by the FBL. We reject such a
        command with parameter out of range response. The same happens, if the address is
        outside available flash ROM - this check is delegated to the flash ROM driver. */
     const uint8_t addrExt = _ccpFsm.croMsg.payload[3];
     const bool isMta0 = _ccpFsm.croMsg.payload[2] == 0u;
-    const uint32_t addr = ((((unsigned)_ccpFsm.croMsg.payload[4] << 8)
-                            | _ccpFsm.croMsg.payload[5]
-                           ) << 8
-                           | _ccpFsm.croMsg.payload[6]
-                          ) << 8
-                          | _ccpFsm.croMsg.payload[7];
-    const bool isValidAddr = addrExt == 0u  && rom_isValidAddressRange(addr, 1);
+    const uint32_t addr = readU32FromCro(/*idxFirstByte*/ 4u);
+    const bool isValidAddr = addrExt == 0u  && rom_isValidFlashAddressRange(addr, 1);
 
     unsigned int reponseCode;
     if(isMta0 && isValidAddr)
@@ -426,6 +457,78 @@ static void onSetMta(void)
     finalizeDtoMsg(reponseCode);
 
 } /* onSetMta */
+
+
+/**
+ * When the availability and the correctness of the erase comand have been checked, then
+ * this function initiates the operation at the flash driver.\n
+ *   This function is either called immediately on reception of a CCP CLEAR_MEMORY command
+ * or a bit later, when we first had to wait for the flash ROM driver becoming idle. 
+ */
+static void submitClearMemory(void)
+{
+    /* If the flash driver is free then we submit the erase command immediately and
+       wait in another state for ist completion. */
+    if(rom_startEraseFlashMemory(_ccpFsm.mta0, _ccpFsm.noBytesToEraseOrProgram))
+    {
+        #if VERBOSE >= 1
+        iprintf( "Now clearing %lu Bytes at 0x%08lX.\r\n"
+               , _ccpFsm.noBytesToEraseOrProgram
+               , _ccpFsm.mta0
+               );
+        #endif
+        _ccpFsm.tiWait = CCP_TI_MAX_WAIT_FLASH_DRV_ERASE_IN_MS;
+        _ccpFsm.state = ccp_stateFsm_erasing;
+    }
+    else
+    {
+        /* The flash driver doesn't accept the command. */
+        // TODO Check if this is an assertion; we had beforehand checked busy and the address range
+        _ccpFsm.state = ccp_stateFsm_connected;
+        finalizeDtoMsg(ccpCmdRespCode_paramOutOfRange);
+    }        
+} /* submitClearMemory */
+
+
+/**
+ * The reaction on a received CCP CLEAR_MEMORY command.\n
+ *   The command is executed synchronously with respect to the CCP protocol flow. The CCP
+ * will receive the DTO only after completion. There are two blocking states involved. When
+ * the command comes in then the flash driver could be still busy (in an asynchronously
+ * executetd, earlier programm command). If it is free, the erase command can be submitted
+ * but then we need to wait aiagn for its completion. The CCP state machine uses two
+ * pending states to synchronize with these blocking states of the flash driver.
+ */
+static void onClearMemory(void)
+{
+    _ccpFsm.noBytesToEraseOrProgram = readU32FromCro(/*idxFirstByte*/ 2u);
+    const bool isValidAddrRange = rom_isValidFlashAddressRange( _ccpFsm.mta0
+                                                              , _ccpFsm.noBytesToEraseOrProgram
+                                                              );
+    if(isValidAddrRange)
+    {
+        if(!rom_isFlashDriverBusy())
+            submitClearMemory();
+        else
+        {
+            /* If the flash driver is busy then we enter the state to wait for its
+               availability. We don't store additional information, all we need to know
+               later remains in the CRO message buffer. */
+            _ccpFsm.tiWait = CCP_TI_MAX_WAIT_FLASH_DRV_BUSY_IN_MS;
+            _ccpFsm.state = ccp_stateFsm_flashDrvBusy;
+        }
+    }
+    else
+    {
+        #if VERBOSE >= 1
+        iprintf( "Clearing %lu Bytes at 0x%08lX is rejected.\r\n"
+               , _ccpFsm.noBytesToEraseOrProgram
+               , _ccpFsm.mta0
+               );
+        #endif
+        finalizeDtoMsg(ccpCmdRespCode_paramOutOfRange);
+    }
+} /* onClearMemory */
 
 
 /**
@@ -490,6 +593,10 @@ static void onRxCroMsg(void)
             onSetMta();
             break;
 
+        case ccpCmd_clearMemory:
+            onClearMemory();
+            break;
+
         default:
             // TODO Shall we abort the session? Likely yes, protocol error
             #if VERBOSE >= 2
@@ -514,17 +621,54 @@ static void onRxCroMsg(void)
  */
 static void onCanError(void)
 {
-    /* CAN errors in state idel, when no CCP connection is active, are silently ignored. In
-       all other states, we terminate the session as sson as possible. We only wait for a
+    /* CAN errors in state idle, when no CCP connection is active, are silently ignored. In
+       all other states, we terminate the session as soon as possible. We only wait for a
        possibly running flash job to terminate. */
     if(_ccpFsm.state != ccp_stateFsm_idle)
     {
 #if VERBOSE >= 1
         iprintf("CCP session is aborted due to CAN Rx/Tx errors.\n");
 #endif
+        _ccpFsm.tiWait = CCP_TI_MAX_WAIT_ABORT_FLASH_DRV_BUSY_IN_MS;
         _ccpFsm.state = ccp_stateFsm_aborting;
+        
     }
 } /* onCanError */
+
+
+/**
+ * After waiting for the flash driver becoming idle, we can submit the pending CCP command.
+ * The information about the command (erase or program) is still found in the CRO message
+ * buffer.
+ */
+static void reSubmitCroCmd(void)
+{
+    assert(_ccpFsm.state == ccp_stateFsm_flashDrvBusy);
+    switch(_ccpFsm.croMsg.payload[0])
+    {
+//    case ccpCmd_disconnect:
+//        submitDisconnect();
+//        break;
+
+    case ccpCmd_clearMemory:
+        submitClearMemory();
+        break;
+
+//    case ccpCmd_program:
+//        submitProgram();
+//        break;
+//
+//    case ccpCmd_program6:
+//        submitProgram6();
+//        break;
+
+    default:
+        assert(false);
+        discardCro();
+    }
+    assert(_ccpFsm.state != ccp_stateFsm_flashDrvBusy);
+    
+} /* reSubmitCroCmd */
 
 
 /**
@@ -535,9 +679,72 @@ static void onClockTick(void)
     switch(_ccpFsm.state)
     {
     case ccp_stateFsm_aborting:
-        // TODO Synchronization with flash FSM is required here. Wait for all jobs done.
-        /* Abort everything and return to state idle. */
-        initFsm();
+        /* Try waiting for flash ROM driver being idle again, the abort everything and
+           return to state idle. No DTO is sent any more. */
+        if(_ccpFsm.tiWait > 0u)
+        {   
+            if(rom_isFlashDriverBusy())
+                -- _ccpFsm.tiWait;
+            else
+                initFsm();
+        }
+        else
+            initFsm();
+
+        break;
+
+    case ccp_stateFsm_flashDrvBusy:
+        /* A CCP command is pending. The demanded action (erase, program) could not be
+           initiate yet, since the flash ROM driver was still busy. Now check its state
+           again and go ahead when eventually free again. However, don't block forever,
+           consider a timeout. */
+        if(_ccpFsm.tiWait > 0u)
+        {   
+            if(rom_isFlashDriverBusy())
+                -- _ccpFsm.tiWait;
+            else
+            {
+                /* The CRO message buffer still contains the CRO message, which we could
+                   not process yet due to the flash driver being busy. Now we try the
+                   evaluation of the message again. */
+                reSubmitCroCmd();
+            }
+        }
+        else
+        {
+#if VERBOSE >= 2
+            iprintf("Flash driver stuck, CCP command fails.\n");
+#endif
+            _ccpFsm.state = ccp_stateFsm_connected;
+            finalizeDtoMsg(ccpCmdRespCode_overload);
+        }
+        break;
+
+    case ccp_stateFsm_erasing:
+        /* Erasure of flash has been initated at the flash driver. Now wait for completion.
+           However, don't block forever, consider a timeout. */
+        if(_ccpFsm.tiWait > 0u)
+        {   
+            if(rom_isFlashDriverBusy())
+                -- _ccpFsm.tiWait;
+            else
+            {
+                /* Erasure completed. Eventually, we can send out the DTO. */
+                #if VERBOSE >= 1
+                iprintf("Flash erasure completed.\r\n");
+                #endif
+                _ccpFsm.state = ccp_stateFsm_connected;
+                finalizeDtoMsg(ccpCmdRespCode_noError);
+            }
+        }
+        else
+        {
+#if VERBOSE >= 2
+            iprintf("Flash driver stuck in erase, CCP command fails.\n");
+#endif
+            _ccpFsm.state = ccp_stateFsm_connected;
+            finalizeDtoMsg(ccpCmdRespCode_overload);
+        }
         break;
 
     default:
@@ -625,6 +832,11 @@ void ccp_taskOsRxCcp(uint32_t taskParam)
         checkForAsyncEvents();
         
         onClockTick();
+        
+        /* Run the flash ROM driver from the same task as the CCP protocol. This eliminates
+           all race conditions between the two and all commanding and error/result checking
+           becomes most easy. */
+        rom_flashRomMain();
     }
 
     if(_ccpFsm.dtoMsg.isResponseReady)
