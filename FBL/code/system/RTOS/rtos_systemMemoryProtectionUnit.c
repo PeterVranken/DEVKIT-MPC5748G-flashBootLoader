@@ -228,27 +228,25 @@ void rtos_osInitMPU(void)
 
     unsigned int r = 0;
 
-#if !defined(LINK_IN_RAM) /* See below, RAM configuration, otherwise */
     /* We consider the entire flash ROM, as far as used in this sample, as one memory
-       region. We use linker defined symbols to find the boundaries. They need to be
-       aligned compatible with the constraints of the SMPU. All start and end addresses
-       have a granularity of 16 Byte. By hardware, the least significant four bits of a
-       start address are set to zero and to all ones for an end address. This requires
-       according alignment operations in the linker script. This is checked by assertion. */
-    extern uint8_t ld_romStart[0], ld_romEnd[0];
-    assert(((uintptr_t)ld_romStart & 0xf) == 0  &&  ((uintptr_t)ld_romEnd & 0xf) == 0);
-
-    /* All used flash ROM.
+       region. Different to the normal application use case, where the region matches the
+       space required and used by the application, the FBL has read and write access to the
+       entire flash ROM. (The write access is required for the programming sequence.)
          All masters and processes (i.e., user mode code) get full read and execute rights.
-       Write access is forbidden in order to detect programming errors. */
-    SMPU_0->RGD[r].WORD0    = (uintptr_t)ld_romStart;   /* Start address of region. */
-    SMPU_0->RGD[r].WORD1    = (uintptr_t)ld_romEnd-1;   /* End address of region, including. */
+       Write access is forbidden in order to detect programming errors.
+         Build in RAM: Access is not required for the location of the FBL itself but only
+       for the area, which can be programmed by the FBL. */
+#if defined(LINK_IN_RAM)
+    SMPU_0->RGD[r].WORD0    = (uintptr_t)0x00FA0000u;   /* Start address of region. */
+#else
+    SMPU_0->RGD[r].WORD0    = (uintptr_t)0x00F90000u;   /* Start address of region. */
+#endif
+    SMPU_0->RGD[r].WORD1    = (uintptr_t)(0x01580000u-1);/* End address of region, including. */
     SMPU_0->RGD[r].WORD2.F1 = WORD2_ALL_ROM;
     SMPU_0->RGD[r].WORD3    = WORD3_ACCESS_SET_ROM_PERIPHERALS;
     SMPU_0->RGD[r].WORD4    = WORD4_NO_PID_COMPARISON;
     SMPU_0->RGD[r].WORD5    = WORD5_LOCK_AND_ENABLE;    /* Enable region descriptor. */
     ++ r;
-#endif
 
     /* All peripheral address space (256MB) except for last 16k block, labeled "Reserved"
        in RM 3.6.1, Table 3-5, p. 133.
