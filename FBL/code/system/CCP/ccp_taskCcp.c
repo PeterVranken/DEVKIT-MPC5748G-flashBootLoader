@@ -30,6 +30,8 @@
  *   onSetMta
  *   submitClearMemory
  *   onClearMemory
+ *   submitProgram
+ *   onProgram
  *   onRxCroMsg
  *   onCanError
  *   reSubmitCroCmd
@@ -107,6 +109,8 @@ enum ccpCmd_t
     ccpCmd_setMta = 0x02u,
     ccpCmd_disconnect = 0x07u,
     ccpCmd_clearMemory = 0x10u,
+    ccpCmd_program = 0x18u,
+    ccpCmd_program6 = 0x22u,
 };
 
 /** The CCP command retun codes, which are in use. */
@@ -172,10 +176,15 @@ static struct ccpFsm_t
     /** The current value of the data pointer MTA0. */
     uint32_t mta0;
 
-    /** Temporary storage of the number of bytes to erase or program. Use in case of
+    /** Temporary storage of the number of bytes to erase or program. Used in case of
         delayed submission of the command due to the flash ROM driver being temporarily
         busy. */
     uint32_t noBytesToEraseOrProgram;
+    
+    /** Temporary storage of the number of bytes to program. Used in case of delayed
+        submission of the PROGRAM or PROGRAM_6 command due to the flash ROM driver being
+        temporarily busy. */
+    const uint8_t *pDataToProgram;
     
     /** An input event of the FSM: Error receivig a CRO message. A signal to close the
         session. The asynchronity between event sender (a CAN ISR context) and receiver
@@ -224,7 +233,7 @@ static void initFsm(void)
  * Initialize the module. Needs to be called prior to the very first activation of the CCP
  * task.
  *   @return
- * The function returns \ true on success. If \a false is returned then CCP won't be
+ * The function returns \a true on success. If \a false is returned then CCP won't be
  * operational and the application should better not start up.
  *   @remark
  * This function depends on the CAN driver CDR, which needs to be initialized before
@@ -354,12 +363,12 @@ static inline void discardCro(void)
  *   @param[in] cmdResponseCode
  * The CCP response code, which written into the DTO message.
  */
-static inline void finalizeDtoMsg(unsigned int cmdResponseCode)
+static inline void finalizeDtoMsg(enum ccpCmdResponseCode_t cmdResponseCode)
 {
     /* Packet ID is always 0xFF. */
     _ccpFsm.dtoMsg.payload[0] = 0xFFu;
 
-    _ccpFsm.dtoMsg.payload[1] = cmdResponseCode;
+    _ccpFsm.dtoMsg.payload[1] = (unsigned)cmdResponseCode;
 
     /* Echo the command counter. */
     _ccpFsm.dtoMsg.payload[2] = _ccpFsm.croMsg.payload[1];
@@ -467,8 +476,8 @@ static void onSetMta(void)
  */
 static void submitClearMemory(void)
 {
-    /* If the flash driver is free then we submit the erase command immediately and
-       wait in another state for ist completion. */
+    /* As the flash driver is free we submit the erase command immediately and wait in
+       another state for its completion. */
     if(rom_startEraseFlashMemory(_ccpFsm.mta0, _ccpFsm.noBytesToEraseOrProgram))
     {
         #if VERBOSE >= 1
@@ -529,6 +538,94 @@ static void onClearMemory(void)
         finalizeDtoMsg(ccpCmdRespCode_paramOutOfRange);
     }
 } /* onClearMemory */
+
+
+/**
+ * When the availability and the correctness of the PROGRAM or PROGRAM_6 comand have been
+ * checked, then this function initiates the operation at the flash driver.\n
+ *   This function is either called immediately on reception of a CCP PROGRAM(_6) command
+ * or a bit later, when we first had to wait for the flash ROM driver becoming idle. 
+ */
+static void submitProgram(void)
+{
+    /* As the flash driver is free we submit the program command immediately and return the
+       DTO. The actual programming in running asynchronously from now on in the flash
+       driver. */
+    enum ccpCmdResponseCode_t reponseCode;
+    if(rom_startProgram(_ccpFsm.mta0, _ccpFsm.pDataToProgram, _ccpFsm.noBytesToEraseOrProgram))
+    {
+        #if VERBOSE >= 3
+        iprintf( "Now programming %lu Bytes at 0x%08lX.\r\n"
+               , _ccpFsm.noBytesToEraseOrProgram
+               , _ccpFsm.mta0
+               );
+        #endif
+        reponseCode = ccpCmdRespCode_noError;
+    }
+    else
+    {
+        /* The flash driver doesn't accept the command. */
+        // TODO Check if this is an assertion; we had beforehand checked busy and the address range
+        reponseCode = ccpCmdRespCode_paramOutOfRange;
+    }
+    
+    finalizeDtoMsg(reponseCode);
+    _ccpFsm.state = ccp_stateFsm_connected;
+        
+} /* submitProgram */
+
+
+/**
+ * The reaction on a received CCP PROGRAM command.\n
+ *   The command is executed asynchronously with respect to the CCP protocol flow. The CCP
+ * will receive the DTO after successful submission of the command at the flash driver,
+ * which only means that command and data have been buffered in the driver. This leads to a
+ * potential blocking state. If the driver's input buffer is full then we wait till the
+ * driver is available again. After this wait phase, the DTO is returned.\n
+ *   It depends on the speed of programming and CCP data transmission, what will typically
+ * happen. If programming is in average faster than CCP data transfer, then we will rarely see
+ * the blocking happen and CCP data tansfer is running at full speed. If vice versa, then
+ * programming will slow down the CCP data transfer to the average rate of programming.
+ */
+static void onProgram(bool isProgram6)
+{
+    if(isProgram6)
+    {
+        _ccpFsm.noBytesToEraseOrProgram = 6u;
+        _ccpFsm.pDataToProgram = &_ccpFsm.croMsg.payload[2];
+    }
+    else
+    {
+        _ccpFsm.noBytesToEraseOrProgram = (unsigned)_ccpFsm.croMsg.payload[2];
+        _ccpFsm.pDataToProgram = &_ccpFsm.croMsg.payload[3];
+    }
+    const bool isValidAddrRange = rom_isValidFlashAddressRange( _ccpFsm.mta0
+                                                              , _ccpFsm.noBytesToEraseOrProgram
+                                                              );
+    if(isValidAddrRange)
+    {
+        if(!rom_isFlashDriverBusy())
+            submitProgram();
+        else
+        {
+            /* If the flash driver is busy then we enter the state to wait for its
+               availability. We don't store additional information, all we need to know
+               later remains in_ccpFsm and the CRO message buffer. */
+            _ccpFsm.tiWait = CCP_TI_MAX_WAIT_FLASH_DRV_BUSY_IN_MS;
+            _ccpFsm.state = ccp_stateFsm_flashDrvBusy;
+        }
+    }
+    else
+    {
+        #if VERBOSE >= 1
+        iprintf( "Prgramming %lu Bytes at 0x%08lX is rejected.\r\n"
+               , _ccpFsm.noBytesToEraseOrProgram
+               , _ccpFsm.mta0
+               );
+        #endif
+        finalizeDtoMsg(ccpCmdRespCode_paramOutOfRange);
+    }
+} /* onProgram */
 
 
 /**
@@ -597,6 +694,14 @@ static void onRxCroMsg(void)
             onClearMemory();
             break;
 
+        case ccpCmd_program:
+            onProgram(/*isProgram6*/ false);
+            break;
+
+        case ccpCmd_program6:
+            onProgram(/*isProgram6*/ true);
+            break;
+
         default:
             // TODO Shall we abort the session? Likely yes, protocol error
             #if VERBOSE >= 2
@@ -646,6 +751,7 @@ static void reSubmitCroCmd(void)
     assert(_ccpFsm.state == ccp_stateFsm_flashDrvBusy);
     switch(_ccpFsm.croMsg.payload[0])
     {
+// TODO DISCONNECT should use this mechanism, too, to wait for the flash driver to complete its last (program) action
 //    case ccpCmd_disconnect:
 //        submitDisconnect();
 //        break;
@@ -654,13 +760,10 @@ static void reSubmitCroCmd(void)
         submitClearMemory();
         break;
 
-//    case ccpCmd_program:
-//        submitProgram();
-//        break;
-//
-//    case ccpCmd_program6:
-//        submitProgram6();
-//        break;
+    case ccpCmd_program:
+    case ccpCmd_program6:
+        submitProgram();
+        break;
 
     default:
         assert(false);
@@ -712,9 +815,9 @@ static void onClockTick(void)
         }
         else
         {
-#if VERBOSE >= 2
+            #if VERBOSE >= 2
             iprintf("Flash driver stuck, CCP command fails.\n");
-#endif
+            #endif
             _ccpFsm.state = ccp_stateFsm_connected;
             finalizeDtoMsg(ccpCmdRespCode_overload);
         }
@@ -733,15 +836,17 @@ static void onClockTick(void)
                 #if VERBOSE >= 1
                 iprintf("Flash erasure completed.\r\n");
                 #endif
+                _ccpFsm.mta0 += _ccpFsm.noBytesToEraseOrProgram;
                 _ccpFsm.state = ccp_stateFsm_connected;
                 finalizeDtoMsg(ccpCmdRespCode_noError);
             }
         }
         else
         {
-#if VERBOSE >= 2
+            #if VERBOSE >= 2
             iprintf("Flash driver stuck in erase, CCP command fails.\n");
-#endif
+            #endif
+            _ccpFsm.mta0 += _ccpFsm.noBytesToEraseOrProgram;
             _ccpFsm.state = ccp_stateFsm_connected;
             finalizeDtoMsg(ccpCmdRespCode_overload);
         }

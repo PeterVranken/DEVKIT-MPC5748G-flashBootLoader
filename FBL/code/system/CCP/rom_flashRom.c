@@ -129,6 +129,20 @@ bool rom_startEraseFlashMemory(uint32_t address, uint32_t noBytes)
 }
 
 
+/* Initiate programming a number of bytes. */
+bool rom_startProgram(uint32_t address, const uint8_t *pDataToProgram, uint32_t noBytes)
+{
+    if(_tiBusy == 0u  && rom_isValidFlashAddressRange(address, noBytes))
+    {
+        /* Scaling such that one byte requires 10ms. */
+        _tiBusy = noBytes * 10u;
+        return true;
+    }
+    else
+        return false;
+}
+    
+
 void rom_flashRomMain(void)
 {
     if(_tiBusy > 0u)

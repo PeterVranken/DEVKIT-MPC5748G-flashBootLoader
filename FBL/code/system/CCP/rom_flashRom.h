@@ -56,6 +56,9 @@ bool rom_isValidFlashAddressRange(uint32_t address, uint32_t size);
 /* Initiate erasure of a portion of the flash ROM. */
 bool rom_startEraseFlashMemory(uint32_t address, uint32_t noBytes);
 
+/* Initiate programming a number of bytes. */
+bool rom_startProgram(uint32_t address, const uint8_t *pDataToProgram, uint32_t noBytes);
+    
 /* Regularly called main function of driver. */
 void rom_flashRomMain(void);
 
