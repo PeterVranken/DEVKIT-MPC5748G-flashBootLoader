@@ -72,7 +72,7 @@
 
 /** Development support: Set verbosity. If not zero then more or less information is
     written to the console. Needs to be zero for productive use. */
-#define VERBOSE     2
+#define VERBOSE     1
 
 /** The maximum wait time between arrival of a CCP command and the flash ROM driver
     returning to state idle (from a previous command). If this time elapses then the CCP
@@ -401,6 +401,23 @@ static inline uint32_t readU32FromCro(unsigned int idxFirstByte)
 } /* readU32FromCro */
 
 
+/** 
+ * Helper: Write the MTA0 into the DTO message.\n
+ *   The address in field \a mta0 is encoded in the response as expected for the DTO of CCP
+ * commands PROGRAM, PROGRAM_6, DOWNLOAD and DOWNLOAD_6.
+ */
+static inline void writeMta0IntoDto(void)
+{
+    /* Address extension isn't used at all. */
+    _ccpFsm.dtoMsg.payload[3] = 0u; 
+    const uint32_t addr = _ccpFsm.mta0;
+    _ccpFsm.dtoMsg.payload[4] = (addr & 0xFF000000u) >> 24;
+    _ccpFsm.dtoMsg.payload[5] = (addr & 0x00FF0000u) >> 16;
+    _ccpFsm.dtoMsg.payload[6] = (addr & 0x0000FF00u) >>  8;
+    _ccpFsm.dtoMsg.payload[7] = (addr & 0x000000FFu) >>  0;
+}
+
+
 /**
  * The reaction on a received CCP DISCONNECT command.
  */
@@ -624,7 +641,11 @@ static void submitProgram(void)
                , _ccpFsm.mta0
                );
         #endif
+        
+        /* The MTA is updated and the new value echoes in the reponse message. */
         _ccpFsm.mta0 += _ccpFsm.noBytesToProcess;
+        writeMta0IntoDto();
+        
         reponseCode = ccpCmdRespCode_noError;
     }
     else
