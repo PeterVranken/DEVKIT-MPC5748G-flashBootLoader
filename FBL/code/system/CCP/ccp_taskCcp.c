@@ -23,6 +23,8 @@
  *   ccp_osFilterForCcpMsg
  *   ccp_taskOsRxCcp
  * Local functions
+ *   setTimeout
+ *   checkTimeout
  *   discardCro
  *   finalizeDtoMsg
  *   readU32FromCro
@@ -178,8 +180,8 @@ static struct ccpFsm_t
 
     /** A down-counter for limiting time spans. Used as timeout in the states, where we
         wait for the flash ROM driver to complete. */
-    uint32_t tiWait;
-    
+    unsigned int tiWaitInMs;
+
     /** The current value of the data pointer MTA0. */
     uint32_t mta0;
 
@@ -187,12 +189,12 @@ static struct ccpFsm_t
         delayed submission of the command due to the flash ROM driver being temporarily
         busy. */
     uint32_t noBytesToProcess;
-    
+
     /** Temporary storage of the number of bytes to program. Used in case of delayed
         submission of the PROGRAM or PROGRAM_6 command due to the flash ROM driver being
         temporarily busy. */
     const uint8_t *pDataToProgram;
-    
+
     /** An input event of the FSM: Error receivig a CRO message. A signal to close the
         session. The asynchronity between event sender (a CAN ISR context) and receiver
         (the CCP task) is handled by the counter pattern: The ISR is the owner and only
@@ -224,7 +226,7 @@ static void initFsm(void)
 {
     _ccpFsm.state = ccp_stateFsm_idle;
     _ccpFsm.dtoMsg.isResponseReady = false;
-    _ccpFsm.tiWait = 0u;
+    _ccpFsm.tiWaitInMs = 0u;
     _ccpFsm.mta0 = 0u;
     _ccpFsm.noBytesToProcess = 0u;
     _ccpFsm.canTxErr = false;
@@ -348,6 +350,58 @@ bool ccp_osFilterForCcpMsg( bool * const pMsgConsumed
 
 
 /**
+ * Set a timeout value.\n
+ *   Use counterpart function checkTimeout() to see it has already elapsed.
+ *   @param[in] tiWaitInMs
+ * The timeout value in Milliseconds.
+ *   @warning The general purpose timeout counter tiWait is applied. Consequently, we can
+ * only have one timeout supervision at a time. Conflicting, overlapping use of the global
+ * timeout counter can't be diagnosed or recognized but we simply lead to wrong application
+ * behavior.
+ */
+static inline void setTimeout(unsigned int tiWaitInMs)
+{
+    /* Setting the timeout value to zero to stop the timeout measurement is a wanted use
+       case. Otherwise, if the timeut is started, it must not be in use. */
+    assert(tiWaitInMs == 0u  ||  _ccpFsm.tiWaitInMs == 0u);
+y
+    _ccpFsm.tiWaitInMs = tiWaitInMs;
+}
+
+
+/**
+ * Check if the timeout has elapsed, which had been programmed using setTimeout().
+ *   @return
+ *     @retval to_busy
+ * The timeout has not elapsed yet and we still wait for the condition to become true.
+ *     @retval to_timeout
+ * The timeout has elapsed without the condition becoming true. If you get this return
+ * value then the global timeout counter is again available for another purpose.
+ *     @retval to_done
+ * The condition, we wait for became true before the timeout has elapsed. If you get this
+ * return value then the global timeout counter is again available for another purpose.
+ *   @param[in] tiWaitInMs
+ * The timeout value in Milliseconds.
+ *   @warning The general purpose timeout counter tiWait is applied. Consequently, we can
+ * only have one timeout supervision at a time. Conflicting, overlapping use of the global
+ * timeout counter is diagnosed by assertion.
+ */
+static enum {to_busy, to_timeout, to_done} checkTimeout(bool conditionToWaitFor)
+{
+    if(conditionToWaitFor)
+    {
+        _ccpFsm.tiWaitInMs = 0u;
+        return to_done;
+    }
+    else if(_ccpFsm.tiWaitInMs > 0)
+        return to_busy;
+    else
+        return to_timeout;
+
+} /* checkTimeout */
+
+
+/**
  * Discard a received CRO message, which is silently ignored because it either doesn't
  * address to us or we are not in a successfully connected CCP session.
  */
@@ -383,13 +437,14 @@ static inline void finalizeDtoMsg(enum ccpCmdResponseCode_t cmdResponseCode)
     /* Set flag for next possible transmission of DTO. */
     _ccpFsm.dtoMsg.isResponseReady = true;
 
-    /* Start the session idle timeout. */
-    _ccpFsm.tiWait = CCP_TI_MAX_SESSION_IDLE_IN_MS;
+    /* The pending CRO command has completed. Start the session idle timeout to limit the
+       time till reception of next CRO. */
+    setTimeout(CCP_TI_MAX_SESSION_IDLE_IN_MS);
 
 } /* finalizeDtoMsg */
 
 
-/** 
+/**
  * Helper: Read a 32 Bit word from the payload of a CRO message.\n
  *   The word is assumed to have big endian, MSB first.
  *   @param[in] idxFirstByte
@@ -408,7 +463,7 @@ static inline uint32_t readU32FromCro(unsigned int idxFirstByte)
 } /* readU32FromCro */
 
 
-/** 
+/**
  * Helper: Write the MTA0 into the DTO message.\n
  *   The address in field \a mta0 is encoded in the response as expected for the DTO of CCP
  * commands PROGRAM, PROGRAM_6, DOWNLOAD and DOWNLOAD_6.
@@ -416,7 +471,7 @@ static inline uint32_t readU32FromCro(unsigned int idxFirstByte)
 static inline void writeMta0IntoDto(void)
 {
     /* Address extension isn't used at all. */
-    _ccpFsm.dtoMsg.payload[3] = 0u; 
+    _ccpFsm.dtoMsg.payload[3] = 0u;
     const uint32_t addr = _ccpFsm.mta0;
     _ccpFsm.dtoMsg.payload[4] = (addr & 0xFF000000u) >> 24;
     _ccpFsm.dtoMsg.payload[5] = (addr & 0x00FF0000u) >> 16;
@@ -499,7 +554,7 @@ static void onSetMta(void)
  * When the availability and the correctness of the UPLOAD comand have been checked, then
  * this function completes the operation.\n
  *   This function is either called immediately on reception of a CCP UPLOAD command
- * or a bit later, when we first had to wait for the flash ROM driver becoming idle. 
+ * or a bit later, when we first had to wait for the flash ROM driver becoming idle.
  */
 static void submitUpload(void)
 {
@@ -516,7 +571,7 @@ static void submitUpload(void)
     _ccpFsm.mta0 += _ccpFsm.noBytesToProcess;
     finalizeDtoMsg(ccpCmdRespCode_noError);
     _ccpFsm.state = ccp_stateFsm_connected;
-        
+
 } /* submitUpload */
 
 
@@ -538,7 +593,7 @@ static void onUpload(void)
             /* If the flash driver is busy then we enter the state to wait for its
                availability. We don't store additional information, all we need to know
                later remains in _ccpFsm and the CRO message buffer. */
-            _ccpFsm.tiWait = CCP_TI_MAX_WAIT_FLASH_DRV_BUSY_IN_MS;
+            setTimeout(CCP_TI_MAX_WAIT_FLASH_DRV_BUSY_IN_MS);
             _ccpFsm.state = ccp_stateFsm_flashDrvBusy;
         }
     }
@@ -559,7 +614,7 @@ static void onUpload(void)
  * When the availability and the correctness of the erase comand have been checked, then
  * this function initiates the operation at the flash driver.\n
  *   This function is either called immediately on reception of a CCP CLEAR_MEMORY command
- * or a bit later, when we first had to wait for the flash ROM driver becoming idle. 
+ * or a bit later, when we first had to wait for the flash ROM driver becoming idle.
  */
 static void submitClearMemory(void)
 {
@@ -573,7 +628,7 @@ static void submitClearMemory(void)
                , _ccpFsm.mta0
                );
         #endif
-        _ccpFsm.tiWait = CCP_TI_MAX_WAIT_FLASH_DRV_ERASE_IN_MS;
+        setTimeout(CCP_TI_MAX_WAIT_FLASH_DRV_ERASE_IN_MS);
         _ccpFsm.state = ccp_stateFsm_erasing;
     }
     else
@@ -582,7 +637,7 @@ static void submitClearMemory(void)
         // TODO Check if this is an assertion; we had beforehand checked busy and the address range
         _ccpFsm.state = ccp_stateFsm_connected;
         finalizeDtoMsg(ccpCmdRespCode_paramOutOfRange);
-    }        
+    }
 } /* submitClearMemory */
 
 
@@ -611,7 +666,7 @@ static void onClearMemory(void)
             /* If the flash driver is busy then we enter the state to wait for its
                availability. We don't store additional information, all we need to know
                later remains in the CRO message buffer. */
-            _ccpFsm.tiWait = CCP_TI_MAX_WAIT_FLASH_DRV_BUSY_IN_MS;
+            setTimeout(CCP_TI_MAX_WAIT_FLASH_DRV_BUSY_IN_MS);
             _ccpFsm.state = ccp_stateFsm_flashDrvBusy;
         }
     }
@@ -632,7 +687,7 @@ static void onClearMemory(void)
  * When the availability and the correctness of the PROGRAM or PROGRAM_6 comand have been
  * checked, then this function initiates the operation at the flash driver.\n
  *   This function is either called immediately on reception of a CCP PROGRAM(_6) command
- * or a bit later, when we first had to wait for the flash ROM driver becoming idle. 
+ * or a bit later, when we first had to wait for the flash ROM driver becoming idle.
  */
 static void submitProgram(void)
 {
@@ -648,11 +703,11 @@ static void submitProgram(void)
                , _ccpFsm.mta0
                );
         #endif
-        
+
         /* The MTA is updated and the new value echoes in the reponse message. */
         _ccpFsm.mta0 += _ccpFsm.noBytesToProcess;
         writeMta0IntoDto();
-        
+
         reponseCode = ccpCmdRespCode_noError;
     }
     else
@@ -661,10 +716,10 @@ static void submitProgram(void)
         // TODO Check if this is an assertion; we had beforehand checked busy and the address range
         reponseCode = ccpCmdRespCode_paramOutOfRange;
     }
-    
+
     finalizeDtoMsg(reponseCode);
     _ccpFsm.state = ccp_stateFsm_connected;
-        
+
 } /* submitProgram */
 
 
@@ -707,7 +762,7 @@ static void onProgram(bool isProgram6)
             /* If the flash driver is busy then we enter the state to wait for its
                availability. We don't store additional information, all we need to know
                later remains in _ccpFsm and the CRO message buffer. */
-            _ccpFsm.tiWait = CCP_TI_MAX_WAIT_FLASH_DRV_BUSY_IN_MS;
+            setTimeout(CCP_TI_MAX_WAIT_FLASH_DRV_BUSY_IN_MS);
             _ccpFsm.state = ccp_stateFsm_flashDrvBusy;
         }
     }
@@ -776,6 +831,9 @@ static void onRxCroMsg(void)
         break;
 
     case ccp_stateFsm_connected:
+        /* Stop the timeout, which limits the idle time of a session. */
+        setTimeout(0u);
+        
         switch(_ccpFsm.croMsg.payload[0])
         {
         case ccpCmd_disconnect:
@@ -808,6 +866,7 @@ static void onRxCroMsg(void)
             iprintf("Unsupported CCP CRO command %u received.\r\n", _ccpFsm.croMsg.payload[0]);
             #endif
             discardCro();
+            setTimeout(CCP_TI_MAX_SESSION_IDLE_IN_MS);
         }
         break;
 
@@ -834,7 +893,7 @@ static void onCanError(void)
 #if VERBOSE >= 1
         iprintf("CCP session is aborted due to CAN Rx/Tx errors.\n");
 #endif
-        _ccpFsm.tiWait = CCP_TI_MAX_WAIT_ABORT_FLASH_DRV_BUSY_IN_MS;
+        setTimeout(CCP_TI_MAX_WAIT_ABORT_FLASH_DRV_BUSY_IN_MS);
         _ccpFsm.state = ccp_stateFsm_aborting;
     }
 } /* onCanError */
@@ -873,7 +932,7 @@ static void reSubmitCroCmd(void)
         discardCro();
     }
     assert(_ccpFsm.state != ccp_stateFsm_flashDrvBusy);
-    
+
 } /* reSubmitCroCmd */
 
 
@@ -882,21 +941,16 @@ static void reSubmitCroCmd(void)
  */
 static void onClockTick(void)
 {
+    if(_ccpFsm.tiWaitInMs > 0u)
+        -- _ccpFsm.tiWaitInMs;
+    
     switch(_ccpFsm.state)
     {
     case ccp_stateFsm_aborting:
         /* Try waiting for flash ROM driver being idle again, then abort everything and
            return to state idle. No DTO is sent any more. */
-        if(_ccpFsm.tiWait > 0u)
-        {   
-            if(rom_isFlashDriverBusy())
-                -- _ccpFsm.tiWait;
-            else
-                initFsm();
-        }
-        else
+        if(checkTimeout(!rom_isFlashDriverBusy()) != to_busy)
             initFsm();
-
         break;
 
     case ccp_stateFsm_flashDrvBusy:
@@ -904,53 +958,54 @@ static void onClockTick(void)
            initiate yet, since the flash ROM driver was still busy. Now check its state
            again and go ahead when eventually free again. However, don't block forever,
            consider a timeout. */
-        if(_ccpFsm.tiWait > 0u)
-        {   
-            if(rom_isFlashDriverBusy())
-                -- _ccpFsm.tiWait;
-            else
-            {
-                /* The CRO message buffer still contains the CRO message, which we could
-                   not process yet due to the flash driver being busy. Now we try the
-                   evaluation of the message again. */
-                reSubmitCroCmd();
-            }
-        }
-        else
+        switch(checkTimeout(!rom_isFlashDriverBusy()))
         {
+        case to_done:
+            /* The CRO message buffer still contains the CRO message, which we could
+               not process yet due to the flash driver being busy. Now we try the
+               evaluation of the message again. */
+            reSubmitCroCmd();
+            break;            
+        case to_timeout:
             #if VERBOSE >= 2
             iprintf("Flash driver stuck, CCP command fails.\n");
             #endif
             _ccpFsm.state = ccp_stateFsm_connected;
             finalizeDtoMsg(ccpCmdRespCode_overload);
+            break;
+        default:
+            assert(false);
+        case to_busy:
+            break;
         }
+
         break;
 
     case ccp_stateFsm_erasing:
         /* Erasure of flash has been initiated at the flash driver. Now wait for completion.
            However, don't block forever, consider a timeout. */
-        if(_ccpFsm.tiWait > 0u)
-        {   
-            if(rom_isFlashDriverBusy())
-                -- _ccpFsm.tiWait;
-            else
-            {
-                /* Erasure completed. Eventually, we can send out the DTO. */
-                #if VERBOSE >= 1
-                iprintf("Flash erasure completed.\r\n");
-                #endif
-                /* Note, CLEAR_MEMORY must not increment the MTA. */
-                _ccpFsm.state = ccp_stateFsm_connected;
-                finalizeDtoMsg(ccpCmdRespCode_noError);
-            }
-        }
-        else
+        switch(checkTimeout(!rom_isFlashDriverBusy()))
         {
+        case to_done:
+            /* Erasure completed. Eventually, we can send out the DTO. */
+            #if VERBOSE >= 1
+            iprintf("Flash erasure completed.\r\n");
+            #endif
+            /* Note, CLEAR_MEMORY must not increment the MTA. */
+            _ccpFsm.state = ccp_stateFsm_connected;
+            finalizeDtoMsg(ccpCmdRespCode_noError);
+            break;            
+        case to_timeout:
             #if VERBOSE >= 2
             iprintf("Flash driver stuck in erase, CCP command fails.\n");
             #endif
             _ccpFsm.state = ccp_stateFsm_connected;
             finalizeDtoMsg(ccpCmdRespCode_overload);
+            break;
+        default:
+            assert(false);
+        case to_busy:
+            break;
         }
         break;
 
@@ -958,16 +1013,14 @@ static void onClockTick(void)
         /* If we are connected but no CRO command is currently in progress, then the
            timeout counter is applied to limit the time, we wait for the next CRO. If it
            elapses then we close the session silently. */
-        if(_ccpFsm.tiWait > 0u)
-            -- _ccpFsm.tiWait;
-        else
+        if(checkTimeout(false) == to_timeout)
         {
             #if VERBOSE >= 1
             iprintf( "No CRO received after %u ms. Session is closed.\n"
                    , CCP_TI_MAX_SESSION_IDLE_IN_MS
                    );
             #endif
-            _ccpFsm.tiWait = CCP_TI_MAX_WAIT_ABORT_FLASH_DRV_BUSY_IN_MS;
+            setTimeout(CCP_TI_MAX_WAIT_ABORT_FLASH_DRV_BUSY_IN_MS);
             _ccpFsm.state = ccp_stateFsm_aborting;
         }
         break;
@@ -999,7 +1052,7 @@ static void checkForAsyncEvents(void)
     const bool canErr = canRxErrCnt != _ccpFsm.canRxErrAck  ||  _ccpFsm.canTxErr;
     _ccpFsm.canRxErrAck = canRxErrCnt;
     _ccpFsm.canTxErr = false;
-    
+
     /* If we see a CAN error, then we call the related handler, which takes the state
        dependent decision. */
     if(canErr)
@@ -1054,9 +1107,9 @@ void ccp_taskOsRxCcp(uint32_t taskParam)
     {
         // TODO Could be done in any task activation
         checkForAsyncEvents();
-        
+
         onClockTick();
-        
+
         /* Run the flash ROM driver from the same task as the CCP protocol. This eliminates
            all race conditions between the two and all commanding and error/result checking
            becomes most easy. */
