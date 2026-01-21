@@ -88,6 +88,10 @@
     timeout should be in the magnitude of 10s. */
 #define CCP_TI_MAX_WAIT_FLASH_DRV_ERASE_IN_MS       20000u
 
+/** The session timeout. The session is silently closed, if the client didn't send any CRO
+    command this long. */
+#define CCP_TI_MAX_SESSION_IDLE_IN_MS               5000u
+
 /** The maximum wait time between an unexpected protocol error and the flash ROM driver
     returning to state idle. Normally, we wait up to this this time before we finally abort
     the current session. We want to see the flash ROM driver in idle when aborting, so that
@@ -378,6 +382,9 @@ static inline void finalizeDtoMsg(enum ccpCmdResponseCode_t cmdResponseCode)
 
     /* Set flag for next possible transmission of DTO. */
     _ccpFsm.dtoMsg.isResponseReady = true;
+
+    /* Start the session idle timeout. */
+    _ccpFsm.tiWait = CCP_TI_MAX_SESSION_IDLE_IN_MS;
 
 } /* finalizeDtoMsg */
 
@@ -829,7 +836,6 @@ static void onCanError(void)
 #endif
         _ccpFsm.tiWait = CCP_TI_MAX_WAIT_ABORT_FLASH_DRV_BUSY_IN_MS;
         _ccpFsm.state = ccp_stateFsm_aborting;
-        
     }
 } /* onCanError */
 
@@ -879,7 +885,7 @@ static void onClockTick(void)
     switch(_ccpFsm.state)
     {
     case ccp_stateFsm_aborting:
-        /* Try waiting for flash ROM driver being idle again, the abort everything and
+        /* Try waiting for flash ROM driver being idle again, then abort everything and
            return to state idle. No DTO is sent any more. */
         if(_ccpFsm.tiWait > 0u)
         {   
@@ -948,10 +954,27 @@ static void onClockTick(void)
         }
         break;
 
+    case ccp_stateFsm_connected:
+        /* If we are connected but no CRO command is currently in progress, then the
+           timeout counter is applied to limit the time, we wait for the next CRO. If it
+           elapses then we close the session silently. */
+        if(_ccpFsm.tiWait > 0u)
+            -- _ccpFsm.tiWait;
+        else
+        {
+            #if VERBOSE >= 1
+            iprintf( "No CRO received after %u ms. Session is closed.\n"
+                   , CCP_TI_MAX_SESSION_IDLE_IN_MS
+                   );
+            #endif
+            _ccpFsm.tiWait = CCP_TI_MAX_WAIT_ABORT_FLASH_DRV_BUSY_IN_MS;
+            _ccpFsm.state = ccp_stateFsm_aborting;
+        }
+        break;
+
     default:
         assert(false);
     case ccp_stateFsm_idle:
-    case ccp_stateFsm_connected:
         /* Nothing to do on regular clock tick in these states. */
         break;
 
