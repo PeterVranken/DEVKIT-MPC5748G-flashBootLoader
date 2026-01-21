@@ -361,10 +361,6 @@ bool ccp_osFilterForCcpMsg( bool * const pMsgConsumed
  */
 static inline void setTimeout(unsigned int tiWaitInMs)
 {
-    /* Setting the timeout value to zero to stop the timeout measurement is a wanted use
-       case. Otherwise, if the timeut is started, it must not be in use. */
-    assert(tiWaitInMs == 0u  ||  _ccpFsm.tiWaitInMs == 0u);
-y
     _ccpFsm.tiWaitInMs = tiWaitInMs;
 }
 
@@ -382,9 +378,6 @@ y
  * return value then the global timeout counter is again available for another purpose.
  *   @param[in] tiWaitInMs
  * The timeout value in Milliseconds.
- *   @warning The general purpose timeout counter tiWait is applied. Consequently, we can
- * only have one timeout supervision at a time. Conflicting, overlapping use of the global
- * timeout counter is diagnosed by assertion.
  */
 static enum {to_busy, to_timeout, to_done} checkTimeout(bool conditionToWaitFor)
 {
@@ -891,7 +884,7 @@ static void onCanError(void)
     if(_ccpFsm.state != ccp_stateFsm_idle)
     {
 #if VERBOSE >= 1
-        iprintf("CCP session is aborted due to CAN Rx/Tx errors.\n");
+        iprintf("CCP session is aborted due to CAN Rx/Tx errors.\r\n");
 #endif
         setTimeout(CCP_TI_MAX_WAIT_ABORT_FLASH_DRV_BUSY_IN_MS);
         _ccpFsm.state = ccp_stateFsm_aborting;
@@ -940,7 +933,8 @@ static void reSubmitCroCmd(void)
  * Timer event for the protocol state machine.
  */
 static void onClockTick(void)
-{
+{   
+    // TODO Make this another timer method
     if(_ccpFsm.tiWaitInMs > 0u)
         -- _ccpFsm.tiWaitInMs;
     
@@ -950,7 +944,12 @@ static void onClockTick(void)
         /* Try waiting for flash ROM driver being idle again, then abort everything and
            return to state idle. No DTO is sent any more. */
         if(checkTimeout(!rom_isFlashDriverBusy()) != to_busy)
+        {
+#if VERBOSE >= 1
+            iprintf("CCP session ends now.\r\n");
+#endif
             initFsm();
+        }
         break;
 
     case ccp_stateFsm_flashDrvBusy:
@@ -968,7 +967,7 @@ static void onClockTick(void)
             break;            
         case to_timeout:
             #if VERBOSE >= 2
-            iprintf("Flash driver stuck, CCP command fails.\n");
+            iprintf("Flash driver stuck, CCP command fails.\r\n");
             #endif
             _ccpFsm.state = ccp_stateFsm_connected;
             finalizeDtoMsg(ccpCmdRespCode_overload);
@@ -997,7 +996,7 @@ static void onClockTick(void)
             break;            
         case to_timeout:
             #if VERBOSE >= 2
-            iprintf("Flash driver stuck in erase, CCP command fails.\n");
+            iprintf("Flash driver stuck in erase, CCP command fails.\r\n");
             #endif
             _ccpFsm.state = ccp_stateFsm_connected;
             finalizeDtoMsg(ccpCmdRespCode_overload);
@@ -1016,7 +1015,7 @@ static void onClockTick(void)
         if(checkTimeout(false) == to_timeout)
         {
             #if VERBOSE >= 1
-            iprintf( "No CRO received after %u ms. Session is closed.\n"
+            iprintf( "No CRO received after %u ms. Session is closed.\r\n"
                    , CCP_TI_MAX_SESSION_IDLE_IN_MS
                    );
             #endif
@@ -1058,7 +1057,7 @@ static void checkForAsyncEvents(void)
     if(canErr)
     {
 #if VERBOSE >= 3
-        iprintf("State %u: CAN communication error.\n", (unsigned)_ccpFsm.state);
+        iprintf("State %u: CAN communication error.\r\n", (unsigned)_ccpFsm.state);
 #endif
         onCanError();
     }
