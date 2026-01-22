@@ -10,7 +10,7 @@
  * @note This file must not contain anything other than the include directives of all
  * system call defining header files.
  *
- * Copyright (C) 2021-2023 Peter Vranken (mailto:Peter_Vranken@Yahoo.de)
+ * Copyright (C) 2021-2026 Peter Vranken (mailto:Peter_Vranken@Yahoo.de)
  *
  * This program is free software: you can redistribute it and/or modify it
  * under the terms of the GNU Lesser General Public License as published by the
@@ -34,7 +34,6 @@
 #include "lbd_ledAndButtonDriver_defSysCalls.h"
 #include "sio_serialIO_defSysCalls.h"
 #include "cdr_canDriver_defSysCalls.h"
-#include "pwm_pwmIODriver_defSysCalls.h"
 #include "cdr_queuedSending_defSysCalls.h"
 
 #endif  /* RTOS_CONFIG_DEFSYSCALLS_INCLUDED */

@@ -54,7 +54,6 @@
 #include "sio_serialIO.h"
 #include "stm_systemTimer.h"
 #include "cdr_canDriverAPI.h"
-#include "pwm_pwmIODriver.h"
 #include "bsw_canInterface.h"
 #include "ccp_taskCcp.h"
 
@@ -355,9 +354,6 @@ int /* _Noreturn */ main(int noArgs ATTRIB_DBG_ONLY, const char *argAry[] ATTRIB
         assert(false);
     }
 
-    /* Initialize the PWM driver. */
-    pwm_osInitIODriver();
-
 #if 0
     /* After HW initialization, we can start the other cores. Note, there's no guarantee in
        which time order they will arrive in their main. */
@@ -406,11 +402,12 @@ int /* _Noreturn */ main(int noArgs ATTRIB_DBG_ONLY, const char *argAry[] ATTRIB
         initOk = false;
     }
 
-    /* Create the event processors that trigger application tasks at the RTOS. Note, we do not really
-       respect the ID, which is assigned to the event processor by the RTOS API rtos_osCreateEvent Processor().
-       The returned value is redundant. This technique requires that we create the event processors
-       in the right order and this requires in practice a double-check by assertion - later
-       maintenance errors are unavoidable otherwise. */
+    /* Create the event processors that trigger application tasks at the RTOS. Note, we do
+       not really respect the ID, which is assigned to the event processor by the RTOS API
+       rtos_osCreateEvent Processor(). The returned value is redundant. This technique
+       requires that we create the event processors in the right order and this requires in
+       practice a double-check by assertion - later maintenance errors are unavoidable
+       otherwise. */
     unsigned int idEvProc;
 #if 0 /* obsolete */
     #define CREATE_REGULAR_EVENT(tiInMs, tiFirstInMs)                                       \
