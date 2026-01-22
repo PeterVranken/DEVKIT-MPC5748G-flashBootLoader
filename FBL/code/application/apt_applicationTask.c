@@ -53,19 +53,19 @@
 #include <ctype.h>
 #include <assert.h>
 
-#include "cap_canApi.h"
+//#include "cap_canApi.h"
 #include "lbd_ledAndButtonDriver.h"
 #include "bsw_basicSoftware.h"
-#include "cdr_canDriverAPI.h"
-#include "ede_eventDispatcherEngine.h"
-#include "cst_canStatistics.h"
-#include "cdt_canDataTables.h"
+//#include "cdr_canDriverAPI.h"
+//#include "ede_eventDispatcherEngine.h"
+//#include "cst_canStatistics.h"
+//#include "cdt_canDataTables.h"
 #include "f2d_float2Double.h"
-#include "can_canRuntime.h"
+//#include "can_canRuntime.h"
 #include "sio_serialIO.h"
-#include "cmd_canCommand.h"
-#include "pwm_pwmIODriver.h"
-#include "c2p_canToPWM.h"
+//#include "cmd_canCommand.h"
+//#include "pwm_pwmIODriver.h"
+//#include "c2p_canToPWM.h"
 
 /*
  * Defines
@@ -349,9 +349,9 @@ int32_t bsw_taskUserInit(uint32_t PID ATTRIB_DBG_ONLY)
     /* Print initial hello. */
     greeting();
     
-    /* Run the initialization of the CAN stack. */
-    if(!can_initCanStack())
-        success = false;
+//    /* Run the initialization of the CAN stack. */
+//    if(!can_initCanStack())
+//        success = false;
 
     return success? 0: -1;
 
@@ -377,9 +377,6 @@ int32_t bsw_taskUser1ms(uint32_t PID ATTRIB_DBG_ONLY, uint32_t taskParam ATTRIB_
 
     ++ _cntTask1ms;
     
-    /* Call the 1ms step function of the APSW. */
-    //asw_taskApsw_1ms();
-
     return 0;
 
 } /* End of bsw_taskUser1ms */
@@ -408,9 +405,9 @@ int32_t bsw_taskUser10ms(uint32_t PID ATTRIB_DBG_ONLY, uint32_t taskParam ATTRIB
 
     ++ _cntTask10ms;
     
-    /* Call the step function of the CAN interface engine for this task. */
-    assert(can_hDispatcherSystem != EDE_INVALID_DISPATCHER_SYSTEM_HANDLE);
-    ede_dispatcherMain(can_hDispatcherSystem, CAN_IDX_DISPATCHER_10MS);
+//    /* Call the step function of the CAN interface engine for this task. */
+//    assert(can_hDispatcherSystem != EDE_INVALID_DISPATCHER_SYSTEM_HANDLE);
+//    ede_dispatcherMain(can_hDispatcherSystem, CAN_IDX_DISPATCHER_10MS);
 
     /* Look for possible user input through serial interface. */
     static unsigned int DATA_P1(cntIdleLoops_) = 2800;
@@ -423,19 +420,20 @@ int32_t bsw_taskUser10ms(uint32_t PID ATTRIB_DBG_ONLY, uint32_t taskParam ATTRIB
         bool didNotUnderstand = false;
         if(argC >= 1)
         {
-            /* Try interpret the input as supported CAN command. */
-            if(cmd_parseCanCommand(argC, argV))
-            {
-                /* The parse function has taken all required actions, nothing to do here. */
-            }
-            else if(strcmp(argV[0], "show") == 0  &&  argC >= 2)
+//            /* Try interpret the input as supported CAN command. */
+//            if(cmd_parseCanCommand(argC, argV))
+//            {
+//                /* The parse function has taken all required actions, nothing to do here. */
+//            }
+//            else
+            if(strcmp(argV[0], "show") == 0  &&  argC >= 2)
             {
                 if(strcmp(argV[1], "c") == 0)
                     showC();
                 else if(strcmp(argV[1], "w") == 0)
                     showW();
-                else if(strcmp(argV[1], "PWM") == 0)
-                    _enableDisplayPWM = argC == 2u  || strcmp(argV[2], "off") != 0u;
+//                else if(strcmp(argV[1], "PWM") == 0)
+//                    _enableDisplayPWM = argC == 2u  || strcmp(argV[2], "off") != 0u;
             }
             else if(strcmp(argV[0], "help") == 0)
                 help();
@@ -498,34 +496,34 @@ int32_t bsw_taskUser10ms(uint32_t PID ATTRIB_DBG_ONLY, uint32_t taskParam ATTRIB
                        , h, m, s
                        );
             }
-            else if(strcmp(argV[0], "PWM") == 0)
-            {
-                if(argC == 3  ||  argC == 4)
-                {
-                    const signed int chnN = atoi(argV[1]);
-                    pwm_pwmOutChannel_t chn;
-                    switch(chnN)
-                    {
-                        case 1:  chn = pwm_pwmOChn_PA1_J3_pin1; break;
-                        case 2:  chn = pwm_pwmOChn_LED_2_DS10;  break;
-                        case 4:  chn = pwm_pwmOChn_LED_4_DS11;  break;
-                        case 5:  chn = pwm_pwmOChn_LED_5_DS5;   break;
-                        default: chn = pwm_pwmOChn_noPwmOutputs;
-                    }
-                    if(chn != pwm_pwmOChn_noPwmOutputs)
-                    {
-                        float f = atoff(argV[2]);
-                        float dc = 50.0f;
-                        if(argC == 4)
-                            dc = atoff(argV[3]);
-                        pwm_setChnFrequencyAndDutyCycle(chn, f, dc/100.0f);
-                    }
-                    else
-                        iprintf("Invalid PWM channel chosen. Type `help'\r\n");
-                }
-                else
-                    iprintf("Bad number of arguments for command PWM. Type `help'\r\n");
-            }
+//            else if(strcmp(argV[0], "PWM") == 0)
+//            {
+//                if(argC == 3  ||  argC == 4)
+//                {
+//                    const signed int chnN = atoi(argV[1]);
+//                    pwm_pwmOutChannel_t chn;
+//                    switch(chnN)
+//                    {
+//                        case 1:  chn = pwm_pwmOChn_PA1_J3_pin1; break;
+//                        case 2:  chn = pwm_pwmOChn_LED_2_DS10;  break;
+//                        case 4:  chn = pwm_pwmOChn_LED_4_DS11;  break;
+//                        case 5:  chn = pwm_pwmOChn_LED_5_DS5;   break;
+//                        default: chn = pwm_pwmOChn_noPwmOutputs;
+//                    }
+//                    if(chn != pwm_pwmOChn_noPwmOutputs)
+//                    {
+//                        float f = atoff(argV[2]);
+//                        float dc = 50.0f;
+//                        if(argC == 4)
+//                            dc = atoff(argV[3]);
+//                        pwm_setChnFrequencyAndDutyCycle(chn, f, dc/100.0f);
+//                    }
+//                    else
+//                        iprintf("Invalid PWM channel chosen. Type `help'\r\n");
+//                }
+//                else
+//                    iprintf("Bad number of arguments for command PWM. Type `help'\r\n");
+//            }
             else
             {
                 didNotUnderstand = true;
@@ -589,53 +587,53 @@ int32_t bsw_taskUser100ms(uint32_t PID ATTRIB_DBG_ONLY, uint32_t taskParam ATTRI
 {
     assert(PID == bsw_pidUser);
 
-    /* Call the 100ms step functions of the APSW. */
-    c2p_mainFunction100ms();
-
-#if 1
-    static unsigned int SBSS_P1(cntTx_) = 0u;
-    static unsigned int SDATA_P1(canId_) = 0x800u;
-    uint8_t payload[8] = { cntTx_ & 0xFF00u, cntTx_ & 0x00FFu
-                         , 0x22, 0x33 , 0x44, 0x55, 0x66, 0x77
-                         };
-    for(unsigned int u=0; u<16u; ++u)
-    {
-        const cdr_errorAPI_t errCode = cdr_sendMessageQueued
-                                                        ( BSW_CAN_BUS_0
-                                                        , /* isExtId */ true
-                                                        , canId_
-                                                        , /* DLC */ (canId_ & 7u) + 1u
-                                                        , payload
-                                                        );
-        if(errCode == cdr_errApi_noError)
-        {
-//            iprintf("apt: Message %u, ID=0x%X successfully submitted for sending\r\n", cntTx_, canId_);
-            canId_ = (canId_ + 1u) & 0x080Fu;
-            ++ cntTx_;
-            payload[0] = cntTx_ & 0xFF00u;
-            payload[1] = cntTx_ & 0x00FFu;
-        }
-        else    
-        {
-            if(errCode == cdr_errApi_txMailboxBusy)
-            {
-                iprintf( "apt: Can't send message %u, ID=0x%X, mailbox still busy\r\n"
-                       , cntTx_
-                       , canId_
-                       );
-            }
-            else
-            {
-                iprintf( "apt: Can't send message %u, ID=0x%X, error %i\r\n"
-                       , cntTx_
-                       , canId_
-                       , (int)errCode
-                       );
-            }
-            break;
-        }
-    }
-#endif
+//    /* Call the 100ms step functions of the APSW. */
+//    c2p_mainFunction100ms();
+//
+//#if 0
+//    static unsigned int SBSS_P1(cntTx_) = 0u;
+//    static unsigned int SDATA_P1(canId_) = 0x800u;
+//    uint8_t payload[8] = { cntTx_ & 0xFF00u, cntTx_ & 0x00FFu
+//                         , 0x22, 0x33 , 0x44, 0x55, 0x66, 0x77
+//                         };
+//    for(unsigned int u=0; u<16u; ++u)
+//    {
+//        const cdr_errorAPI_t errCode = cdr_sendMessageQueued
+//                                                        ( BSW_CAN_BUS_0
+//                                                        , /* isExtId */ true
+//                                                        , canId_
+//                                                        , /* DLC */ (canId_ & 7u) + 1u
+//                                                        , payload
+//                                                        );
+//        if(errCode == cdr_errApi_noError)
+//        {
+////            iprintf("apt: Message %u, ID=0x%X successfully submitted for sending\r\n", cntTx_, canId_);
+//            canId_ = (canId_ + 1u) & 0x080Fu;
+//            ++ cntTx_;
+//            payload[0] = cntTx_ & 0xFF00u;
+//            payload[1] = cntTx_ & 0x00FFu;
+//        }
+//        else    
+//        {
+//            if(errCode == cdr_errApi_txMailboxBusy)
+//            {
+//                iprintf( "apt: Can't send message %u, ID=0x%X, mailbox still busy\r\n"
+//                       , cntTx_
+//                       , canId_
+//                       );
+//            }
+//            else
+//            {
+//                iprintf( "apt: Can't send message %u, ID=0x%X, error %i\r\n"
+//                       , cntTx_
+//                       , canId_
+//                       , (int)errCode
+//                       );
+//            }
+//            break;
+//        }
+//    }
+//#endif
 
     return 0;
 
@@ -659,66 +657,32 @@ int32_t bsw_taskUser1000ms(uint32_t PID ATTRIB_DBG_ONLY, uint32_t taskParam ATTR
 {
     assert(PID == bsw_pidUser);
 
-    /* Call the 1s step function of the APSW. */
-    //asw_taskApsw_1000ms();
     static bool SDATA_P1(isOn_) = false;
     lbd_setLED(lbd_led_7_DS4, isOn_=!isOn_);
 
-    /* Some test code of the uniform floating point signal API shaped for this sample. */
-    
-//    /* CAN ID 1024, Rx signal "speedOfRotation": Print current value. */
-//    const cdt_canSignal_t *pSpeedOfRotation = &cdt_canSignalAry[1];
-//    assert(pSpeedOfRotation->isReceived
-//           &&  pSpeedOfRotation->idxMsg < sizeOfAry(cdt_canRxMsgAry)
-//          );
-//    printf( "Message %d, signal %s: %f %s\r\n"
-//          , cdt_canRxMsgAry[pSpeedOfRotation->idxMsg].canId
-//          , pSpeedOfRotation->name
-//          , f2d(pSpeedOfRotation->getter())
-//          , pSpeedOfRotation->unit
-//          );
+//    if(_enableDisplayPWM)
+//    {
+//        bool isNewResultPA2;
+//        const float tiPeriod = pwm_getChnInputPeriodTime( &isNewResultPA2
+//                                                        , pwm_pwmIChn_PA2_J3_pin3_periodTime
+//                                                        )
+//                  , f = 1.0f / tiPeriod;
 //
-//    /* CAN ID 1536, Tx signal "power": Change value visibly. */
-//    const cdt_canSignal_t *pPower = &cdt_canSignalAry[14];
-//    assert(!pPower->isReceived
-//           &&  pPower->idxMsg < sizeOfAry(cdt_canTxMsgAry)
-//          );
-//    const float range = pPower->max - pPower->min
-//              , delta = range/15.0f;
-//    float newValue;
-//    newValue = pPower->getter() + delta;
-//    if(newValue > pPower->max)
-//        newValue -= range;
-//    assert(newValue >= pPower->min  &&  newValue <= pPower->max);
-//    pPower->setter(newValue);
-
-    if(_enableDisplayPWM)
-    {
-        bool isNewResultPA2;
-        const float tiPeriod = pwm_getChnInputPeriodTime( &isNewResultPA2
-                                                        , pwm_pwmIChn_PA2_J3_pin3_periodTime
-                                                        )
-                  , f = 1.0f / tiPeriod;
-
-        bool isNewResultPA6;
-        const float tiDuty = pwm_getChnInputDutyTime( &isNewResultPA6
-                                                    , pwm_pwmIChn_PA6_J2_pin1_dutyTime
-                                                    )
-                  , dutyCycle = tiDuty * f;
-
-        printf( "PWM at input PA2/PA6: %.3f Hz/%.3f ms (%s/%s result), DC: %.1f%%\r\n"
-              , f2d(f)
-              , f2d(1000.0f*tiDuty)
-              , isNewResultPA2? "new": "old"
-              , isNewResultPA6? "new": "old"
-              , f2d(dutyCycle <= 1.0f? 100.0f*dutyCycle: -1.0f)
-              );
-    }
+//        bool isNewResultPA6;
+//        const float tiDuty = pwm_getChnInputDutyTime( &isNewResultPA6
+//                                                    , pwm_pwmIChn_PA6_J2_pin1_dutyTime
+//                                                    )
+//                  , dutyCycle = tiDuty * f;
+//
+//        printf( "PWM at input PA2/PA6: %.3f Hz/%.3f ms (%s/%s result), DC: %.1f%%\r\n"
+//              , f2d(f)
+//              , f2d(1000.0f*tiDuty)
+//              , isNewResultPA2? "new": "old"
+//              , isNewResultPA6? "new": "old"
+//              , f2d(dutyCycle <= 1.0f? 100.0f*dutyCycle: -1.0f)
+//              );
+//    }
     
     return 0;
 
 } /* End of bsw_taskUser1000ms */
-
-
-
-

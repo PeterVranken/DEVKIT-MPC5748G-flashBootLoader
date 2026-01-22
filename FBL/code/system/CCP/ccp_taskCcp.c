@@ -60,7 +60,7 @@
 #include "typ_types.h"
 #include "bsw_basicSoftware.h"
 #include "rtos.h"
-#include "bsw_canInterface.h"
+//#include "bsw_canInterface.h"
 #include "cdr_canDriverAPI.h"
 #include "rom_flashRom.h"
 
