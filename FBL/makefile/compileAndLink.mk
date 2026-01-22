@@ -6,7 +6,7 @@
 # Help on the syntax of this makefile is got at
 # http://www.gnu.org/software/make/manual/make.pdf.
 #
-# Copyright (C) 2012-2022 Peter Vranken (mailto:Peter_Vranken@Yahoo.de)
+# Copyright (C) 2012-2026 Peter Vranken (mailto:Peter_Vranken@Yahoo.de)
 #
 # This program is free software: you can redistribute it and/or modify it
 # under the terms of the GNU Lesser General Public License as published by the
@@ -163,11 +163,14 @@ $(objDirList):
 asmFlags = $(targetFlags) -mregnames                                                        \
            $(if $(call isTargetArchitectureZ4,$<),$(targetFlagsZ4),$(targetFlagsZ2))        \
            -Wall                                                                            \
-           -MMD -Wa,-a=$(patsubst %.o,%.lst,$@)                                             \
+           -MMD                                                                             \
            $(foreach path,$(call noTrailingSlash,$(APP) $(incDirList) $(srcDirInUseList)),-I$(path))\
            $(cDefines) $(foreach def,$(defineList),-D$(def))                                \
            -Wa,-g -Wa,-gdwarf-2
-
+ifeq ($(SAVE_TMP),1)
+    # Debugging the build: Put assembler listing in the output directory.
+    asmFlags += -Wa,-a=$(patsubst %.o,%.lst,$@)
+endif
 ifneq ($(CONFIG),DEBUG)
     asmFlags += $(productionCodeOptimization)
 endif
@@ -194,13 +197,13 @@ cFlags = $(targetFlags)                                                         
          -Wno-nested-externs -Werror=int-to-pointer-cast -Werror=pointer-sign               \
          -Werror=pointer-to-int-cast -Werror=return-local-addr -Werror=missing-prototypes   \
          -Werror=missing-field-initializers -Werror=overflow                                \
-         $(cClibSpec) -MMD -Wa,-a=$(patsubst %.o,%.lst,$@) -std=gnu11                       \
+         $(cClibSpec) -MMD -std=gnu11                                                       \
          $(foreach path,$(call noTrailingSlash,$(APP) $(incDirList) $(srcDirInUseList)),-I$(path))\
          $(cDefines) $(foreach def,$(defineList),-D$(def))
 ifeq ($(SAVE_TMP),1)
     # Debugging the build: Put preprocessed C file and assembler listing in the output
-    # directory
-    cFlags += -save-temps=obj -fverbose-asm
+    # directory.
+    cFlags += -Wa,-a=$(patsubst %.o,%.lst,$@) -save-temps=obj -fverbose-asm -fstack-usage
 endif
 # Debug settings see https://gcc.gnu.org/onlinedocs/gcc/Debugging-Options.html#Debugging-Options
 ifeq ($(CONFIG),DEBUG)
@@ -290,6 +293,7 @@ lFlags = -Wl,--gc-sections $(targetFlags)                                       
          -Wl,--warn-common,--warn-once,--orphan-handling=warn -Wl,-g                        \
          $(if $(call isDefined,USE_Z2_CLIB),$(targetFlagsZ2),$(targetFlagsZ4))              \
          -Wl,--defsym=ld_linkInRAM=$(if $(call isDefined,LINK_IN_RAM),1,0)                  \
+         -Wl,--print-memory-usage                                                           \
          $(cClibSpec)
 
 $(targetDir)$(target).elf: $(if $(patchWindowsBug),$(targetDir)obj/listOfObjFiles.txt,$(objFileList)) \
