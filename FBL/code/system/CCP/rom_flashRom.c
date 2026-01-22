@@ -113,7 +113,7 @@ bool rom_isValidFlashAddressRange(uint32_t address, uint32_t size)
  *   @param address
  * The first address to be erased.
  *   @param noBytes
- * The number of bates to erase at \a address.
+ * The number of bytes to erase at \a address.
  */
 static unsigned int _noBytesFlashed = 0u;
 bool rom_startEraseFlashMemory(uint32_t address, uint32_t noBytes)
@@ -122,6 +122,7 @@ bool rom_startEraseFlashMemory(uint32_t address, uint32_t noBytes)
     {
         /* Scaling such that erasing all 4MB takes 10s. */
         _tiBusy = (uint32_t)(5000ull * (uint64_t)noBytes / 2097152ull);
+_tiBusy += 5000;
         _noBytesFlashed = 0u;
         return true;
     }
@@ -136,7 +137,7 @@ bool rom_startProgram(uint32_t address, const uint8_t *pDataToProgram, uint32_t 
     if(_tiBusy == 0u  && rom_isValidFlashAddressRange(address, noBytes))
     {
         /* Scaling such that one byte requires 10ms. */
-        _tiBusy = noBytes * 10u;
+        _tiBusy = 0;//noBytes * 10u;
         _noBytesFlashed += noBytes;
         if((_noBytesFlashed & 0x00000FFFu) < noBytes)
             iprintf("%u Bytes programmed\r\n", _noBytesFlashed);

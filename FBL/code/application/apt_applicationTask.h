@@ -24,11 +24,6 @@
  * Include files
  */
 
-#include <stdatomic.h>
-
-#include "typ_types.h"
-//#include "cst_canStatistics.h"
-
 
 /*
  * Defines

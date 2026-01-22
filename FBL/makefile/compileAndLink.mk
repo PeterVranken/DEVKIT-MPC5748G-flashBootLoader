@@ -35,7 +35,6 @@ COMPILE_AND_LINK_INCLUDED := 1
 include $(sharedMakefilePath)globalVariables.mk
 include $(sharedMakefilePath)commonFunctions.mk
 include $(sharedMakefilePath)locateTools.mk
-include $(sharedMakefilePath)generateCANCode.mk
 
 # The name stem of the final build artifacts.
 target := $(project)

@@ -12,6 +12,6 @@
    definition memoryMapROM.ld is read by the linker. */
 ASSERT(ld_linkInRAM == 1, "This memory map is intended for build in RAM only")
 ld_textSegStartAddr = 0x40000000 ;
-ld_textSegSize      = 2*256k ;
+ld_textSegSize      = 3*64k ;
 ld_dataSegStartAddr = ld_textSegStartAddr + ld_textSegSize ;
 ld_dataSegSize      = 3*256k - ld_textSegSize ;

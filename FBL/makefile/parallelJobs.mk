@@ -86,7 +86,6 @@ mFlags = -f $(sharedMakefilePath)compileAndLink.mk -j $(jobs) --no-print-directo
 # modifications.
 .PHONY: build
 build: makeDir
-	$(MAKE) $(mFlags) generateCanInterface
 	$(MAKE) $(mFlags) $(targetDir)$(projectExe)
 
 # Rebuild all.
@@ -94,7 +93,6 @@ build: makeDir
 .PHONY: rebuild
 rebuild: clean
 	$(MAKE) $(mFlags) makeDir
-	$(MAKE) $(mFlags) generateCanInterface
 	$(MAKE) $(mFlags) $(targetDir)$(projectExe)
             
 # Compile all C source files and assemble the *.S. Target directory tree needs to exist.
@@ -106,7 +104,6 @@ compile: $(objListWithPath)
 targetRunDir ?= $(targetDir)
 run: makeDir
 	$(info Running $(call u2w,$(abspath $(targetDir)$(projectExe))) $(targetRunArgs) in directory $(targetRunDir))
-	$(MAKE) $(mFlags) generateCanInterface
 	$(MAKE) $(mFlags) $(targetDir)$(projectExe)
 	cd $(targetRunDir) & cd & $(call u2w,$(abspath $(targetDir)$(projectExe))) $(targetRunArgs)
 

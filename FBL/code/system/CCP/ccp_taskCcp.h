@@ -36,13 +36,13 @@
 #define CCP_IDX_CAN_BUS_FOR_CCP         0u
     
 /** The CAN ID of the CCP Rx command message, aka CRO message. */
-#define CCP_CAN_ID_CCP_CRO_MSG          0x100u //0x600u
+#define CCP_CAN_ID_CCP_CRO_MSG          0x600u
 
 /** Boolean: Is the CAN ID of the CCP CRO message a 29 Bit extended ID? */
 #define CCP_IS_EXT_CAN_ID_CCP_CRO_MSG   false
  
 /** The CAN ID of the CCP Tx response message, aka DTO message. */
-#define CCP_CAN_ID_CCP_DTO_MSG          0x101u //0x650u
+#define CCP_CAN_ID_CCP_DTO_MSG          0x650u
 
 /** Boolean: Is the CAN ID of the CCP DTO message a 29 Bit extended ID? */
 #define CCP_IS_EXT_CAN_ID_CCP_DTO_MSG   false
