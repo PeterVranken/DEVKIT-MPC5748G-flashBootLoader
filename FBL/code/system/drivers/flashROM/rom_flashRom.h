@@ -59,6 +59,9 @@ bool rom_startEraseFlashMemory(uint32_t address, uint32_t noBytes);
 /* Initiate programming a number of bytes. */
 bool rom_startProgram(uint32_t address, const uint8_t *pDataToProgram, uint32_t noBytes);
     
+/* Force finalization and programming of partly written flash page. */
+void rom_flushProgramDataBuffer(void);
+
 /* Regularly called main function of driver. */
 void rom_flashRomMain(void);
 

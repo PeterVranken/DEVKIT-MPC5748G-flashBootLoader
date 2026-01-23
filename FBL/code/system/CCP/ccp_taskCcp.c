@@ -84,7 +84,7 @@
     after program commands, becasue they are executed asynchronously. The long lasting
     erase commands are execute synchronously with the CCP protocol flow and don't cause a
     wait-of-idle of a subsequent command. */
-#define CCP_TI_MAX_WAIT_FLASH_DRV_BUSY_IN_MS        100u
+#define CCP_TI_MAX_WAIT_FLASH_DRV_BUSY_IN_MS        500u
 
 /** The maximum wait time for completion of an erase command in the flash ROM driver. This
     timeout should be in the magnitude of 10s. */
@@ -478,6 +478,10 @@ static inline void writeMta0IntoDto(void)
  */
 static void onDisconnect(void)
 {
+    /* Force last recently written data (if any) be still programmed before we disconnect. */
+    // TODO This is highly preliminary. Needs to be coordinated with pending erase and completion of programming of flash array. We likely need a wait state for disconnecting
+    rom_flushProgramDataBuffer();
+
     /* Since CCP can't have two session with two different ECU open at a time, the station
        address in the command needs to be ours - otherwise we see a protocol error. The
        reaction is the same in both cases; we close the session. Only the returned response
@@ -555,7 +559,7 @@ static void submitUpload(void)
        the DTO. */
     #if VERBOSE >= 3
     iprintf( "Now uploading %lu Bytes at 0x%08lX.\r\n"
-           , _ccpFsm.noBytesToEraseOrUpload
+           , _ccpFsm.noBytesToProcess
            , _ccpFsm.mta0
            );
     #endif
