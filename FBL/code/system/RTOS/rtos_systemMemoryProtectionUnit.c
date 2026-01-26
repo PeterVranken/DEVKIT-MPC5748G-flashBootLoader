@@ -56,7 +56,7 @@
  * number of processes would be entirely switching off the short addressing modes. This is a
  * matter of the compiler command line
  *
- * Copyright (C) 2018-2024 Peter Vranken (mailto:Peter_Vranken@Yahoo.de)
+ * Copyright (C) 2018-2026 Peter Vranken (mailto:Peter_Vranken@Yahoo.de)
  *
  * This program is free software: you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by the
@@ -186,7 +186,7 @@ void rtos_osInitMPU(void)
 #define WORD2_ALL_RAM                       RGD_WRD2(/* idxPattern */ 1u)
 #define WORD2_PROCESS_RAM                   RGD_WRD2(/* idxPattern */ 2u)
 #define WORD2_SHARED_RAM                    RGD_WRD2(/* idxPattern */ 3u)
-#define WORD3_ACCESS_SET_ROM_PERIPHERALS    RGD_WRD3(055u, 060u, 050u, /* CI */ 0u)
+#define WORD3_ACCESS_SET_ROM_PERIPHERALS    RGD_WRD3(075u, 060u, 050u, /* CI */ 0u)
 #define WORD2_ALL_ROM                       RGD_WRD2(/* idxPattern */ 1u)
 #define WORD2_PERIPHERALS                   RGD_WRD2(/* idxPattern */ 2u)
 #define WORD2_RESERVED_BLOCK                RGD_WRD2(/* idxPattern */ 3u) /* See below */

@@ -39,6 +39,7 @@
 #include <assert.h>
 
 #include "dib_dataInputBuffer.h"
+#include "eap_eraseAndProgram.h"
 
 /*
  * Defines
@@ -216,12 +217,20 @@ void rom_flushProgramDataBuffer(void)
 } /* rom_flushProgramDataBuffer */
 
 
+int SBSS_OS(rom_startTest) = 0;
+
 void rom_flashRomMain(void)
 {
+    static int SBSS_OS(_startTest_last) = 0;
+    if(rom_startTest == 1  &&  _startTest_last == 0)
+        eap_firstTest();
+
+    _startTest_last = rom_startTest;
+    
     /* Emulation of erasure. */
     if(_tiBusy > 0u)
         -- _tiBusy;
-
+        
     /* Emulation of programming. */
     #define DELAY_PER_ROW   20u
     static unsigned int SDATA_OS(noBytesLeft_);
