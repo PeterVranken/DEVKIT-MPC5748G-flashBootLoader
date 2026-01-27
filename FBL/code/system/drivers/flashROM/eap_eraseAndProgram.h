@@ -63,6 +63,9 @@ rom_errorCode_t eap_osStartProgramQuadPage(dib_pageProgramBuffer_t * const pPrgD
 /* Check the status of a programming operation. */
 rom_errorCode_t eap_osGetStatusProgramQuadPage(void);
 
+/* This function stops all erase and program activities of the C55FMC. */
+void eap_abortEraseAndProgram(void);
+
 bool eap_firstTest(bool start);
 
 /*
