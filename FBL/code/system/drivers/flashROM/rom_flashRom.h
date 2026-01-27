@@ -2,7 +2,7 @@
 #define ROM_FLASHROM_INCLUDED
 /**
  * @file rom_flashRom.h
- * Definition of global interface of module rom_flashRom.c
+ * Definition of public interface of flash ROM driver.
  *
  * Copyright (C) 2026 Peter Vranken (mailto:Peter_Vranken@Yahoo.de)
  *
@@ -36,6 +36,17 @@
 /*
  * Global type definitions
  */
+
+/** Error and status codes of the public API of the falsh ROM driver. */
+typedef enum 
+{
+    rom_err_noError,            /**< Operation succeeded without an error. */
+    rom_err_processPending,     /**< Operation successfully initiated, is still ongoing. */
+    rom_err_c55FmcErrorInPeg,   /**< C55FMC reported an error during flash array programming.*/
+    rom_err_unexpectedHwState,  /**< HW is in unexpected state, maybe due to bad API use. */
+    rom_err_invalidErrorCode,   /**< Unused error code, e.g., to initialize variables. */
+    
+} rom_errorCode_t;
 
 
 /*

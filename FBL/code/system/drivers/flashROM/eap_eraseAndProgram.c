@@ -18,9 +18,14 @@
  * along with this program. If not, see <http://www.gnu.org/licenses/>.
  */
 /* Module interface
- *   eap_startProgramQuadPage
- *   eap_getStatusProgramQuadPage
+ *   eap_osInitFlashRomDriver
+ *   eap_osStartEraseFlashBlocks
+ *   eap_osGetStatusEraseFlashBlocks
+ *   eap_osStartProgramQuadPage
+ *   eap_osGetStatusProgramQuadPage
  * Local functions
+ *   disableAllFlashBlocks
+ *   abortEraseAndProgram
  */
 
 /*
@@ -48,6 +53,8 @@
 # include "MPC5775B.h"
 #elif defined(MCU_MPC5775E)
 # include "MPC5775E.h"
+#elif defined(MCU_MPC5777C)
+# include "MPC5777C.h"
 #else
 # error Unsupported MCU configured
 #endif
@@ -55,40 +62,248 @@
 /*
  * Defines
  */
- 
+
 
 /*
  * Local type definitions
  */
- 
- 
+
+
 /*
  * Local prototypes
  */
- 
- 
+
+
 /*
  * Data definitions
  */
- 
- 
+
+
 /*
  * Function implementation
  */
+
+/**
+ * Helper: All flash blocks are (initially) protected against erasure and programming;
+ * over-programming is disabled, too.
+ */
+static void disableAllFlashBlocks(void)
+{
+#if defined(MCU_MPC5748G)
+# define LOCK_ALL_BLKS_0    0xBFFFFFFFu
+# define LOCK_ALL_BLKS_1    0xFFFFFFFFu
+# define LOCK_ALL_BLKS_2    0xFFFFFFFFu
+# define LOCK_ALL_BLKS_3    0xFFFFFFFFu
+# define SELECT_NO_BLK_0    0x00000000u
+# define SELECT_NO_BLK_1    0x00000000u
+# define SELECT_NO_BLK_2    0x00000000u
+# define SELECT_NO_BLK_3    0x00000000u
+#elif defined(MCU_MPC5775B) || defined(MCU_MPC5775E)
+# error Specify flash block configuration for MPC5775B/E
+#elif defined(MCU_MPC5777C)
+# error Specify flash block configuration for MPC5777C
+#endif
+
+    /* Lock all blocks against erasure and programming. RM 74.1.1.1ff, pp.3639ff. */
+    C55FMC->LOCK0 = LOCK_ALL_BLKS_0;
+    C55FMC->LOCK1 = LOCK_ALL_BLKS_1;
+    C55FMC->LOCK2 = LOCK_ALL_BLKS_2;
+    C55FMC->LOCK3 = LOCK_ALL_BLKS_3;
+
+    /* Unselect all blocks from erasure. Dito. */
+    C55FMC->SEL0 = SELECT_NO_BLK_0;
+    C55FMC->SEL1 = SELECT_NO_BLK_1;
+    C55FMC->SEL2 = SELECT_NO_BLK_2;
+    C55FMC->SEL3 = SELECT_NO_BLK_3;
+
+} /* disableAllFlashBlocks */
+
+
+/**
+ * This function stops all erase and program activities of the C55FMC.\n
+ *   It can be called in case of errors or unexpected states.
+ */
+static void abortEraseAndProgram(void)
+{
+    /* The mode of operation bits are disabled in distinct steps. This is a rule from
+       the bit locking. RM48, 74.6, Table 74-3, p.3679. */
+    // TODO Abortion is likely not properly implemented. Compare conditions RM48, 74.5.1, p.3656, for resetting EHV. Hoever, seems to affect only modes, we don't use anyway
+    C55FMC->MCR &= ~C55FMC_MCR_PSUS_MASK;
+    C55FMC->MCR &= ~C55FMC_MCR_ESUS_MASK;
+    C55FMC->MCR &= ~C55FMC_MCR_EHV_MASK;
+    C55FMC->MCR &= ~C55FMC_MCR_PGM_MASK;
+    C55FMC->MCR &= ~C55FMC_MCR_ERS_MASK;
+
+    /* Now we can restore the default settings for accesibility the of flash blocks. */
+    disableAllFlashBlocks();
+
+} /* abortEraseAndProgram */
+
+
+/**
+ * Initialize the flash ROM driver.
+ */
+void eap_osInitFlashRomDriver(void)
+{
+    abortEraseAndProgram();
+
+} /* eap_osInitFlashRomDriver */
+
+
+/**
+ * Start the erasure of one or more flash blocks in the C55 controller.
+ *   The preconditions are checked (availability of controller for erasure) the wanted
+ * blocks are selected and the high voltage is enabled, which makes the flash erasure
+ * begin. The function is non-blocking and doesn't wait for the termination of the erasure.
+ * Use eap_osGetStatusEraseFlashBlocks() to find out, when it has terminated.
+ *   @return
+ * Get the status of the operation. eap_osStartEraseFlashBlocks() or
+ * eap_osStartProgramQuadPage() can be called earliest again when this function returns
+ * either success or failure - but not yet while it reports a pending state
+ * (#rom_err_processPending).
+ *   @param[in] addressFrom
+ * The blocks to erase are specified by the address range, which needs to become blank. All
+ * flash blocks, which share at least one byte with the specified address range, will be
+ * erased, all others don't. This is the first blanked address.
+ *   @param[in] addressTo
+ * End address of blanked address range (exclusive).
+ */
+rom_errorCode_t eap_osStartEraseFlashBlocks(uint32_t addressFrom, uint32_t addressTo)
+{
+    rom_errorCode_t retCode;
+
+    const uint32_t mcr = C55FMC->MCR;
+    #define BITS_TO_BE_CLEARED  (C55FMC_MCR_ERS_MASK     \
+                                 |C55FMC_MCR_PGM_MASK    \
+                                 |C55FMC_MCR_EHV_MASK    \
+                                 |C55FMC_MCR_PSUS_MASK   \
+                                 |C55FMC_MCR_ESUS_MASK   \
+                                )
+    if((mcr & BITS_TO_BE_CLEARED) == 0u)
+    #undef BITS_TO_BE_CLEARED
+    {
+        /* Enable the flash blocks for erase, which are touched by the address range. */
+// TODO Generalize
+// TODO Check: NXP sample code sets SEL only after setting MCR[ERS].
+        assert(addressFrom >= 0xFC0000u  &&  addressTo <= 0xFC8000u);
+        C55FMC->LOCK0 &= ~C55FMC_LOCK0_LOWLOCK(4u); /* Bit 2: 0xFC0000..0xFC8000. */
+        C55FMC->SEL0 = C55FMC_LOCK0_LOWLOCK(4u); /* Bit 2: 0xFC0000..0xFC8000. */
+
+        /* Set MCR[ERS] to start erase operation. */
+        C55FMC->MCR |= C55FMC_MCR_ERS_MASK;
+
+        /* Read bit back to see if we didn't hurt the bit lock rules. */
+// TODO Why do we read-back ERS but not EHV. And why at all?
+        if((C55FMC->MCR & C55FMC_MCR_ERS_MASK) != 0u)
+        {
+            /* The interloack write needs to be done prior to enabling the high voltage. We
+               need to write anywhere into a flash block to be erased. For simplicity, we
+               choose the first address of the first selected block. */
+// TODO Generalize
+            const uint32_t addressInterlock = 0x00FC0000u;
+            *(volatile uint32_t*)addressInterlock = 0xFFFFFFFFu;
+
+            /* We set MCR[EHV] to turn on the high voltage for erasing. See RM48, 74.5.1,
+               p.3656. */
+            C55FMC->MCR |= C55FMC_MCR_EHV_MASK;
+
+            /* This is a non-blocking function. We don't wait for the result but will check
+               it in the next clock tick. */
+            retCode = rom_err_processPending;
+        }
+        else
+            retCode = rom_err_unexpectedHwState;
+    }
+    else
+        retCode = rom_err_unexpectedHwState;
+
+    if(retCode != rom_err_processPending)
+    {
+        /* Turn off high voltage and reset all operation request bits. */
+        abortEraseAndProgram();
+
+// TODO Generalize and centralize
+        C55FMC->LOCK0 |= C55FMC_LOCK0_LOWLOCK(4u); /* Bit 2: 0xFC0000..0xFC8000. */
+        C55FMC->SEL0 &= ~C55FMC_LOCK0_LOWLOCK(4u); /* Bit 2: 0xFC0000..0xFC8000. */
+    }
+
+    return retCode;
+
+} /* eap_osStartEraseFlashBlocks */
+
+
+/**
+ * Check the status of an erase operation, which had been initiated before by
+ * eap_osStartEraseFlashBlocks().
+ *   @return
+ * Get the status of the operation. eap_osStartEraseFlashBlocks() or
+ * eap_osStartProgramQuadPage() can be called earliest again when this function returns
+ * either success or failure - but not yet while it reports a pending state
+ * (#rom_err_processPending).
+ */
+rom_errorCode_t eap_osGetStatusEraseFlashBlocks(void)
+{
+    rom_errorCode_t retCode;
+
+    /* Did we initiate an erase operation before? Without this bit set, MCR[DONE] would be
+       meaningless. */
+    const uint32_t mcr = C55FMC->MCR;
+    #define BITS_TO_BE_SET      (C55FMC_MCR_ERS_MASK|C55FMC_MCR_EHV_MASK)
+    #define BITS_TO_BE_CLEARED  (C55FMC_MCR_PGM_MASK|C55FMC_MCR_PSUS_MASK|C55FMC_MCR_ESUS_MASK)
+    if((mcr & BITS_TO_BE_SET) == BITS_TO_BE_SET  &&  (mcr & BITS_TO_BE_CLEARED) == 0u)
+    #undef BITS_TO_BE_SET
+    #undef BITS_TO_BE_CLEARED
+    {
+        /* MCR[DONE] indicates completion. */
+        if((mcr & C55FMC_MCR_DONE_MASK) != 0u)
+        {
+            /* Check MCR[PEG]. A zero bit indicates an erase error. */
+            if((mcr & C55FMC_MCR_PEG_MASK) != 0u)
+                retCode = rom_err_noError;
+            else
+                retCode = rom_err_c55FmcErrorInPeg;
+        }
+        else
+        {
+            /* MCR[DONE]=0: The operation is still in progress. We wait till next clock
+               tick for the next check. */
+            retCode = rom_err_processPending;
+        }
+    }
+    else
+        retCode = rom_err_unexpectedHwState;
+
+    if(retCode != rom_err_processPending)
+    {
+        /* Turn off high voltage and reset all operation request bits. */
+        abortEraseAndProgram();
+
+// TODO Generalize and centralize
+        C55FMC->LOCK0 |= C55FMC_LOCK0_LOWLOCK(4u); /* Bit 2: 0xFC0000..0xFC8000. */
+        C55FMC->SEL0 &= ~C55FMC_LOCK0_LOWLOCK(4u); /* Bit 2: 0xFC0000..0xFC8000. */
+    }
+
+    return retCode;
+}
+
 
 /**
  * Start the programming of a single quad-page in the C55 controller.\n
  *   The preconditions are checked (availability of controller for new write-page
  * operation), the write buffer is filled with the data and high voltage is enabled, which
  * makes the flash programming begin. The function is non-blocking and doesn't wait for the
- * termination of the program step. Use 
+ * termination of the program step. Use eap_osGetStatusProgramQuadPage() to find out, when
+ * it has terminated.
+ *  @return
+ * Get the status: If everything succeeded, then it is pending (#rom_err_processPending),
+ * otherwise an error message.
  *  @param[in] pPrgDataBuf
  * The buffer with the data to program and the target address in flash ROM.
  */
-status_t eap_startProgramQuadPage(dib_pageProgramBuffer_t * const pPrgDataBuf)
+rom_errorCode_t eap_osStartProgramQuadPage(dib_pageProgramBuffer_t * const pPrgDataBuf)
 {
-    status_t returnCode; 
-    
+    rom_errorCode_t retCode;
+
     /* Cases that program operation can start:
          1. No program and erase sequence:(PGM low and ERS low)
          2. Erase suspend with EHV low: (PGM low, ERS high, ESUS high, EHV low)
@@ -99,7 +314,7 @@ status_t eap_startProgramQuadPage(dib_pageProgramBuffer_t * const pPrgDataBuf)
        state. */
 // TODO Simplify to: PGM=ERS=EHV=ESUS=PSUS=low
     const uint32_t mcr = C55FMC->MCR;
-    if(((mcr & C55FMC_MCR_PGM_MASK) == 0u  
+    if(((mcr & C55FMC_MCR_PGM_MASK) == 0u
         ||  (mcr & (C55FMC_MCR_EHV_MASK|C55FMC_MCR_PSUS_MASK)) == 0u
        )
        && ((mcr & C55FMC_MCR_ERS_MASK) == 0u  ||  (mcr & C55FMC_MCR_ESUS_MASK) != 0u)
@@ -109,11 +324,12 @@ status_t eap_startProgramQuadPage(dib_pageProgramBuffer_t * const pPrgDataBuf)
 // TODO Generalize
         assert(pPrgDataBuf->address >= 0xFC0000u  &&  pPrgDataBuf->address+128u <= 0xFC8000u);
         C55FMC->LOCK0 &= ~C55FMC_LOCK0_LOWLOCK(4u); /* Bit 2: 0xFC0000..0xFC8000. */
+// TODO Try without select: Not needed for programming
         C55FMC->SEL0 = C55FMC_LOCK0_LOWLOCK(4u); /* Bit 2: 0xFC0000..0xFC8000. */
-        
+
         /* Set MCR[PGM] to start program operation. */
         C55FMC->MCR |= C55FMC_MCR_PGM_MASK;
-        
+
         /* Read bit back to see if we didn't hurt the bit lock rules. */
         if((C55FMC->MCR & C55FMC_MCR_PGM_MASK) != 0u)
         {
@@ -127,7 +343,7 @@ status_t eap_startProgramQuadPage(dib_pageProgramBuffer_t * const pPrgDataBuf)
             assert(((uintptr_t)pWr & (DIB_C55FMC_SIZE_OF_QUAD_PAGE-1u)) == 0u
                    && rom_isValidFlashAddressRange((uint32_t)pWr, DIB_C55FMC_SIZE_OF_QUAD_PAGE)
                   );
-            
+
             _Static_assert(DIB_C55FMC_SIZE_OF_QUAD_PAGE % 4u == 0u, "Bad configuration");
             for(unsigned int u=0u; u<DIB_C55FMC_SIZE_OF_QUAD_PAGE/4u; ++u)
                 * pWr++ = * pRd++;
@@ -135,10 +351,10 @@ status_t eap_startProgramQuadPage(dib_pageProgramBuffer_t * const pPrgDataBuf)
             /* After filling the write buffer, we set MCR[EHV] to turn on the high voltage
                for flashing. See RM48, 74.5.1, p.3656. */
             C55FMC->MCR |= C55FMC_MCR_EHV_MASK;
-            
+
             /* This is a non-blocking function. We don't wait for the result but will check
                it in the next clock tick. */
-            returnCode = STATUS_FLASH_IN_PROGRESS;
+            retCode = rom_err_processPending;
         }
         else
         {
@@ -147,29 +363,30 @@ status_t eap_startProgramQuadPage(dib_pageProgramBuffer_t * const pPrgDataBuf)
             C55FMC->LOCK0 |= C55FMC_LOCK0_LOWLOCK(4u); /* Bit 2: 0xFC0000..0xFC8000. */
             C55FMC->SEL0 &= ~C55FMC_LOCK0_LOWLOCK(4u); /* Bit 2: 0xFC0000..0xFC8000. */
 
-            returnCode = STATUS_FLASH_ERR_UNEXPECTED_STATE;
+            retCode = rom_err_unexpectedHwState;
         }
     }
     else
-        returnCode = STATUS_BUSY;
+        retCode = rom_err_unexpectedHwState;
 
-    return returnCode;
-    
-} /* eap_startProgramQuadPage */
+    return retCode;
+
+} /* eap_osStartProgramQuadPage */
 
 
 /**
  * Check the status of a programming operation, which had been initiated before by
- * eap_startProgramQuadPage(). 
+ * eap_osStartProgramQuadPage().
  *   @return
- * Get the status of the operation. eap_startProgramQuadPage() can be called earliest again
- * when this function returns either success or failure - but not yet while it reports a
- * pending state.
+ * Get the status of the operation. eap_osStartEraseFlashBlocks() or
+ * eap_osStartProgramQuadPage() can be called earliest again when this function returns
+ * either success or failure - but not yet while it reports a pending state
+ * (#rom_err_processPending).
  */
-status_t eap_getStatusProgramQuadPage(void)
+rom_errorCode_t eap_osGetStatusProgramQuadPage(void)
 {
-    status_t returnCode;
-    
+    rom_errorCode_t retCode;
+
     /* There must be a program operation but no suspend or erase visible. */
     const uint32_t mcr = C55FMC->MCR;
     #define BITS_TO_BE_SET      (C55FMC_MCR_PGM_MASK|C55FMC_MCR_EHV_MASK)
@@ -184,75 +401,135 @@ status_t eap_getStatusProgramQuadPage(void)
         {
             /* Check MCR[PEG]. A zero bit indicates a programming error. */
             if((mcr & C55FMC_MCR_PEG_MASK) != 0u)
-                returnCode = STATUS_SUCCESS;
+                retCode = rom_err_noError;
             else
-                returnCode = STATUS_ERROR_IN_PGM;
-                
+                retCode = rom_err_c55FmcErrorInPeg;
+
             /* High voltage and program mode are disabled in two steps. This is a rule from
-               the bit locking. */
+               the bit locking. RM48, 74.6, Table 74-3, p.3679. */
             C55FMC->MCR &= ~C55FMC_MCR_EHV_MASK;
             C55FMC->MCR &= ~C55FMC_MCR_PGM_MASK;
         }
         else
         {
             /* MCR[DONE]=0: The operation is still in progress. We wait till next clock
-               tick for for the next check. */
-            returnCode = STATUS_FLASH_IN_PROGRESS;
+               tick for the next check. */
+            retCode = rom_err_processPending;
         }
     }
     else
     {
-        /* We are in an unexpected state. Unconditionally turn high programming voltage and
-           programming or erase mode off. */
+        /* We are in an unexpected state. Unconditionally turn off high programming voltage
+           and programming or erase mode. */
         C55FMC->MCR &= ~C55FMC_MCR_EHV_MASK;
         C55FMC->MCR &= ~(C55FMC_MCR_PGM_MASK | C55FMC_MCR_ERS_MASK);
 
-        returnCode = STATUS_FLASH_ERR_UNEXPECTED_STATE;
-        
+        retCode = rom_err_unexpectedHwState;
+
     } /* if(HW is in the expected state, which is programming?) */
-    
-    if(returnCode != STATUS_FLASH_IN_PROGRESS)
+
+    if(retCode != rom_err_processPending)
     {
 // TODO Generalize and centralize
         C55FMC->LOCK0 |= C55FMC_LOCK0_LOWLOCK(4u); /* Bit 2: 0xFC0000..0xFC8000. */
         C55FMC->SEL0 &= ~C55FMC_LOCK0_LOWLOCK(4u); /* Bit 2: 0xFC0000..0xFC8000. */
     }
 
-    return returnCode;
-    
-} /* eap_getStatusProgramQuadPage */
+    return retCode;
+
+} /* eap_osGetStatusProgramQuadPage */
 
 
-dib_pageProgramBuffer_t SDATA_OS(eap_prgDataBuf) =
+
+
+
+/***************************** Test, temporary code ******************/
+
+dib_pageProgramBuffer_t BSS_OS(eap_prgDataBuf) =
 {
-    .address = 0xFC0000u,
-    .data_b = 
+    .address = 0u,
+    .data_b =
     {
         [0 ... (DIB_C55FMC_SIZE_OF_QUAD_PAGE-1u)] = 0u,
     },
 };
-unsigned int eap_noWaitCycles = 0u;
-status_t eap_resultGetStatus = STATUS_INVALID
-       , eap_resultStartPrg = STATUS_INVALID;
-bool eap_firstTest(void)
+unsigned int eap_noWaitCyclesErase = 0u
+           , eap_noWaitCyclesPgm = 0u
+           , eap_cntFsm = 0u;
+rom_errorCode_t eap_resultStartErase = rom_err_invalidErrorCode
+              , eap_resultGetStatusErase = rom_err_invalidErrorCode
+              , eap_resultStartPgm = rom_err_invalidErrorCode
+              , eap_resultGetStatusPgm = rom_err_invalidErrorCode;
+/** Return true if state machine requires continued calling for completing the process. */
+bool eap_firstTest(bool start)
 {
-    for(unsigned int u=0u; u<DIB_C55FMC_SIZE_OF_QUAD_PAGE; ++u)
-        eap_prgDataBuf.data_b[u] = u & 0xFFu;
+    static enum {idle, init, error, waitForErase, program, success, } state_ SECTION(.sdata.OS.var) = idle;
     
-    eap_resultStartPrg = eap_startProgramQuadPage(&eap_prgDataBuf);
-
-    if(eap_resultStartPrg == STATUS_FLASH_IN_PROGRESS)
+    if(start)
     {
-        eap_noWaitCycles = 0u;
-        while(true)
+        assert(state_ == idle  ||  state_ == success);
+        state_ = init;
+    }
+    else
+        assert(state_ == waitForErase  ||  state_ == program);
+    
+    if(state_ == init)
+    {
+        eap_cntFsm = 0u;
+        eap_prgDataBuf.address = 0xFC0000u;
+        static uint8_t SDATA_OS(startVal_) = 1u;
+        for(unsigned int u=0u; u<DIB_C55FMC_SIZE_OF_QUAD_PAGE; ++u)
+            eap_prgDataBuf.data_b[u] = (startVal_ + u) & 0xFFu;
+        ++ startVal_;
+
+        eap_resultStartErase = eap_osStartEraseFlashBlocks( eap_prgDataBuf.address
+                                                          , eap_prgDataBuf.address
+                                                            + DIB_C55FMC_SIZE_OF_QUAD_PAGE
+                                                          );
+        if(eap_resultStartErase == rom_err_processPending)
         {
-            eap_resultGetStatus = eap_getStatusProgramQuadPage();
-            if(eap_resultGetStatus == STATUS_FLASH_IN_PROGRESS)
-                ++ eap_noWaitCycles;
-            else
-                break;
+            eap_noWaitCyclesErase = 0u;
+            state_ = waitForErase;
         }
+        else
+            state_ = error;
+    }        
+    else if(state_ == waitForErase)
+    {
+        ++ eap_noWaitCyclesErase;
+        eap_resultGetStatusErase = eap_osGetStatusEraseFlashBlocks();
+        
+        if(eap_resultGetStatusErase == rom_err_noError)
+            state_ = program;
+        else if(eap_resultGetStatusErase != rom_err_processPending)
+            state_ = error;
+    }
+    else if(state_ == program)
+    {
+        eap_resultStartPgm = eap_osStartProgramQuadPage(&eap_prgDataBuf);
+
+        if(eap_resultStartPgm == rom_err_processPending)
+        {
+            eap_noWaitCyclesPgm = 0u;
+            while(true)
+            {
+                eap_resultGetStatusPgm = eap_osGetStatusProgramQuadPage();
+                if(eap_resultGetStatusPgm == rom_err_processPending)
+                    ++ eap_noWaitCyclesPgm;
+                else
+                {
+                    if(eap_resultGetStatusPgm == rom_err_noError)
+                        state_ = success;
+                    else
+                        state_ = error;
+
+                    break;
+                }
+            }
+        }
+        else
+            state_ = error;
     }
     
-    return eap_resultStartPrg == STATUS_SUCCESS  &&  eap_resultGetStatus == STATUS_SUCCESS;
+    return state_ != error  &&  state_ != success;
 }

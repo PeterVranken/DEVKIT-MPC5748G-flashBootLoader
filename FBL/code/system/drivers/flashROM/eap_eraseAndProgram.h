@@ -28,6 +28,7 @@
 #include <stdbool.h>
 
 #include "dib_dataInputBuffer.h"
+#include "rom_flashRom.h"
 
 /*
  * Defines
@@ -38,17 +39,6 @@
  * Global type definitions
  */
 
-// TODO Naming wrong and values bad
-typedef enum 
-{
-    STATUS_SUCCESS,
-    STATUS_INVALID,
-    STATUS_FLASH_ERR_UNEXPECTED_STATE,
-    STATUS_FLASH_IN_PROGRESS,
-    STATUS_ERROR_IN_PGM,
-    STATUS_BUSY,
-} status_t;
-
 /*
  * Global data declarations
  */
@@ -58,13 +48,22 @@ typedef enum
  * Global prototypes
  */
 
+/* Initialize the flash ROM driver. */
+void eap_osInitFlashRomDriver(void);
+
+/* Start the erasure of one or more flash blocks in the C55 controller. */
+rom_errorCode_t eap_osStartEraseFlashBlocks(uint32_t addressFrom, uint32_t addressTo);
+
+/* Check the status of an erase operation. */
+rom_errorCode_t eap_osGetStatusEraseFlashBlocks(void);
+
 /* Start the programming of a single quad-page in the C55 controller. */
-status_t eap_startProgramQuadPage(dib_pageProgramBuffer_t * const pPrgDataBuf);
+rom_errorCode_t eap_osStartProgramQuadPage(dib_pageProgramBuffer_t * const pPrgDataBuf);
 
 /* Check the status of a programming operation. */
-status_t eap_getStatusProgramQuadPage(void);
+rom_errorCode_t eap_osGetStatusProgramQuadPage(void);
 
-bool eap_firstTest(void);
+bool eap_firstTest(bool start);
 
 /*
  * Global inline functions

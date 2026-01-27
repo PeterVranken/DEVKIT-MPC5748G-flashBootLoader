@@ -201,7 +201,7 @@ bool rom_startProgram(uint32_t address, const uint8_t *pDataToProgram, uint32_t 
  *   This operation needs to be used at the end of data transmission, after the very last
  * call of rom_startProgram(), in order to make all written data be programmed. (Instead of
  * infinitely waiting for possibly more bytes to go into the last recently begun
- * quad-page.)\n 
+ * quad-page.)\n
  *   It is not required to call this function in case of address gaps in the programmed
  * data. If an address gap leads to writing to another quad-page even before the previous
  * one is completed then the flush operation is unconditionally done internally for the
@@ -217,20 +217,22 @@ void rom_flushProgramDataBuffer(void)
 } /* rom_flushProgramDataBuffer */
 
 
-int SBSS_OS(rom_startTest) = 0;
+bool SBSS_OS(rom_startTest) = false;
+bool SDATA_OS(rom_continueTest) = false;
 
 void rom_flashRomMain(void)
 {
-    static int SBSS_OS(_startTest_last) = 0;
-    if(rom_startTest == 1  &&  _startTest_last == 0)
-        eap_firstTest();
+    assert(!rom_startTest || !rom_continueTest);
+    if(rom_startTest || rom_continueTest)
+    {
+        rom_continueTest = eap_firstTest(rom_startTest);
+        rom_startTest = false;
+    }
 
-    _startTest_last = rom_startTest;
-    
     /* Emulation of erasure. */
     if(_tiBusy > 0u)
         -- _tiBusy;
-        
+
     /* Emulation of programming. */
     #define DELAY_PER_ROW   20u
     static unsigned int SDATA_OS(noBytesLeft_);
