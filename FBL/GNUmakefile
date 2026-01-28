@@ -63,7 +63,7 @@ srcDirList := code/ ../tools/comFramework/canInterface/code/
 # Exclusion list: Edit the list of excluded files. A blank separated list of C or assembler
 # source files is expected (all file designations with relative path), which are excluded
 # from build.
-cFileListExcl :=
+cFileListExcl := code/system/drivers/flashROM/flash_c55_driver.c
 
 # Additional include directories (besides the source directories and common, project
 # independent paths).
@@ -92,7 +92,7 @@ incDirList := code/application/ code/application/Z4A/
 defineList := USE_NEWLIB \
               CAP_UNCONDITIONALLY_GENERATE_PACK_FCTS \
               CAP_UNCONDITIONALLY_GENERATE_UNPACK_FCTS \
-#              LINK_IN_RAM
+              LINK_IN_RAM
 
 # Now go into the project independent implementation of the compile and link rules using
 # the project specific settings made above.

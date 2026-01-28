@@ -26,18 +26,67 @@
 
 #include <stdint.h>
 #include <stdbool.h>
+#include <stddef.h>
 
-#include "dib_dataInputBuffer.h"
+#include "typ_types.h"
 #include "rom_flashRom.h"
 
 /*
  * Defines
  */
 
+/** The needed buffer size in Byte. It reflects the property of the flash array, how many
+    bytes can be programmed at once, and must not be changed. */
+#define EAP_C55FMC_SIZE_OF_QUAD_PAGE    128u
+
+/** The bit mask, which to AND with an address in the middle of the flash ROM array in
+    order to yield the address offset in the quad page, which that address is in. */
+#define EAP_MASK_C55FMC_MASK_ADDR_IN_QUAD_PAGE ((EAP_C55FMC_SIZE_OF_QUAD_PAGE)-1u)
+
+/** The bit mask, which to AND with an address in the middle of the flash ROM array in
+    order to yield the address of the quad page, which that address is in. */
+#define EAP_MASK_C55FMC_MASK_ADDR_OF_QUAD_PAGE (~EAP_MASK_C55FMC_MASK_ADDR_IN_QUAD_PAGE)
+
+/** Get the address of the quad page, which a given address \a addr point into. */
+#define GET_ADDR_OF_QUAD_PAGE(/*uint32_t*/ addr)    \
+                                (((uint32_t)(addr)) & EAP_MASK_C55FMC_MASK_ADDR_OF_QUAD_PAGE)
+
+/** Get the relative address (offset) in the quad page, which a given address \a addr point
+    into. */
+#define EAP_GET_ADDR_OFFS_IN_QUAD_PAGE(/*uint32_t*/ addr)   \
+                                (((uint32_t)(addr)) & EAP_MASK_C55FMC_MASK_ADDR_IN_QUAD_PAGE)
+
 
 /*
  * Global type definitions
  */
+
+/** A data buffer for programming a quad-page. The base programming step, writing a quad
+    page of 128 Byte, can be done with the information found in the buffer. */
+typedef struct
+{
+    /** The address to program the buffer data at. It is the global address in the address
+        space of the MCU and it considers the quad-page alignment constraint of the flash
+        ROM array. */
+    uint32_t address;
+
+    /** The data in different word widths. */
+    union
+    {
+        /** The data as 128 bytes. */
+        uint8_t data_b[EAP_C55FMC_SIZE_OF_QUAD_PAGE];
+
+        /** The data as 8*4 words. */
+        uint32_t data_u32[EAP_C55FMC_SIZE_OF_QUAD_PAGE / 4u];
+    };
+} eap_quadPageProgramBuffer_t;
+
+_Static_assert( offsetof(eap_quadPageProgramBuffer_t, data_b)
+                == offsetof(eap_quadPageProgramBuffer_t, data_u32)
+                &&  sizeoffield(eap_quadPageProgramBuffer_t, data_b)
+                    == sizeoffield(eap_quadPageProgramBuffer_t, data_u32)
+              , "Invalid data modelling"
+              );
 
 /*
  * Global data declarations
@@ -58,7 +107,7 @@ rom_errorCode_t eap_osStartEraseFlashBlocks(uint32_t addressFrom, uint32_t addre
 rom_errorCode_t eap_osGetStatusEraseFlashBlocks(void);
 
 /* Start the programming of a single quad-page in the C55 controller. */
-rom_errorCode_t eap_osStartProgramQuadPage(dib_pageProgramBuffer_t * const pPrgDataBuf);
+rom_errorCode_t eap_osStartProgramQuadPage(eap_quadPageProgramBuffer_t * const pPrgDataBuf);
 
 /* Check the status of a programming operation. */
 rom_errorCode_t eap_osGetStatusProgramQuadPage(void);

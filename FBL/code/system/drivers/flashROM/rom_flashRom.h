@@ -27,6 +27,9 @@
 #include <stdint.h>
 #include <stdbool.h>
 
+/** @todo Define either MCU_MPC5748G, MCU_MPC5775B or MCU_MPC5775E to select the MCU, which
+    this module is compiled for. */
+#define MCU_MPC5748G
 
 /*
  * Defines
@@ -37,10 +40,11 @@
  * Global type definitions
  */
 
-/** Error and status codes of the public API of the falsh ROM driver. */
+/** Error and status codes of the public API of the flash ROM driver. */
 typedef enum 
 {
     rom_err_noError,            /**< Operation succeeded without an error. */
+    rom_err_badAddressRange,    /**< Operation rejected due to bad/invalid addresses. */
     rom_err_processPending,     /**< Operation successfully initiated, is still ongoing. */
     rom_err_c55FmcErrorInPeg,   /**< C55FMC reported an error during flash array programming.*/
     rom_err_unexpectedHwState,  /**< HW is in unexpected state, maybe due to bad API use. */

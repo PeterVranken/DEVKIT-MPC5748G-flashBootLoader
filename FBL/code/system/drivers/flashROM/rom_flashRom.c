@@ -41,6 +41,19 @@
 #include "dib_dataInputBuffer.h"
 #include "eap_eraseAndProgram.h"
 
+/* Include the appropriate MCU header. */
+#if defined(MCU_MPC5748G)
+# include "MPC5748G.h"
+#elif defined(MCU_MPC5775B)
+# include "MPC5775B.h"
+#elif defined(MCU_MPC5775E)
+# include "MPC5775E.h"
+#elif defined(MCU_MPC5777C)
+# include "MPC5777C.h"
+#else
+# error Unsupported MCU configured
+#endif
+
 /*
  * Defines
  */
@@ -97,16 +110,25 @@ bool rom_isFlashDriverBusy(void)
  */
 bool rom_isValidFlashAddressRange(uint32_t address, uint32_t size)
 {
+#if defined(MCU_MPC5748G)
     const uint32_t endAddr = address + size;
 
-    /* We can handle the overflow at the end of the ROM very easily, because the very last
-       address in the address space is in no way manageable flash ROM. Caution, this might
-       be different on other devices. */
+    /* We can handle the overflow at the end of the 32 Bit address space very easily,
+       because the very last address in the address space is in no way manageable flash
+       ROM. Caution, this might be different on other devices. Our driver implementation
+       will fail at many code locations in this case. */
     if(endAddr < address)
         return false;
 
+    /* The hard-coded limits are checked for consistency with the flash block configuration
+       in the driver initialization. */
     return address >= 0x00FA0000u  &&  endAddr <= 0x01580000u;
 
+#elif defined(MCU_MPC5775B) || defined(MCU_MPC5775E)
+# error Implement rom_isValidFlashAddressRange for MPC5775B/E
+#elif defined(MCU_MPC5777C)
+# error Implement rom_isValidFlashAddressRange for MPC5777C
+#endif
 } /* rom_isValidFlashAddressRange */
 
 
@@ -247,9 +269,10 @@ void rom_flashRomMain(void)
 
         if(_pPrgBuf != NULL)
         {
-            noBytesLeft_ = DIB_C55FMC_SIZE_OF_QUAD_PAGE;
-            wrAddr_ = _pPrgBuf->address;
-            pData_ = &_pPrgBuf->data_b[0];
+            eap_quadPageProgramBuffer_t * const pPageBuf = dib_getBufferPayload(_pPrgBuf);
+            noBytesLeft_ = EAP_C55FMC_SIZE_OF_QUAD_PAGE;
+            wrAddr_ = pPageBuf->address;
+            pData_ = &pPageBuf->data_b[0];
             cntDelay_ = DELAY_PER_ROW;
         }
     }

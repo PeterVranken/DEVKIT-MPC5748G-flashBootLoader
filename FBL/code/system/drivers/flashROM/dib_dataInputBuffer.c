@@ -47,35 +47,31 @@
 #include <assert.h>
 
 #include "rom_flashRom.h"
+#include "eap_eraseAndProgram.h"
 
 /*
  * Defines
  */
 
-/** The bit mask, which to AND with an address in the middle of the flash ROM array in
-    order to yield the address offset in the quad page, which that address is in. */
-#define MASK_C55FMC_MASK_ADDR_IN_QUAD_PAGE ((DIB_C55FMC_SIZE_OF_QUAD_PAGE)-1u)
-
-/** The bit mask, which to AND with an address in the middle of the flash ROM array in
-    order to yield the address of the quad page, which that address is in. */
-#define MASK_C55FMC_MASK_ADDR_OF_QUAD_PAGE (~MASK_C55FMC_MASK_ADDR_IN_QUAD_PAGE)
-
-/** Get the address of the quad page, which a given address \a addr point into. */
-#define GET_ADDR_OF_QUAD_PAGE(/*uint32_t*/ addr)    \
-                                (((uint32_t)(addr)) & MASK_C55FMC_MASK_ADDR_OF_QUAD_PAGE)
-
-/** Get the relative address (offset) in the quad page, which a given address \a addr point
-    into. */
-#define GET_ADDR_OFFS_IN_QUAD_PAGE(/*uint32_t*/ addr)   \
-                                (((uint32_t)(addr)) & MASK_C55FMC_MASK_ADDR_IN_QUAD_PAGE)
-
 /* Blocking free buffer filling (if programming is faster than filling) requires at least
    four buffers. */
-#define NO_DATA_BUFFERS 4u   
-   
+#define NO_DATA_BUFFERS 4u
+
 /*
  * Local type definitions
  */
+
+/** A data input buffer for programming. The base programming step, writing a single page
+    of a flash block, can be done with the information found in the buffer. */
+struct dib_pageProgramBuffer_t
+{
+    /* This element contains the contents opf the quad page and its address. */
+    eap_quadPageProgramBuffer_t pageBuf;
+
+    /** The state of the buffer, like filling, completed, being programmed. */
+    enum {dib_bufSt_free, dib_bufSt_empty, dib_bufSt_filling, dib_bufSt_toBePrgd, } state;
+
+};
 
 
 /*
@@ -92,10 +88,13 @@ static dib_pageProgramBuffer_t _inputBufAry[NO_DATA_BUFFERS] =
 {
     [0 ... sizeOfAry(_inputBufAry)-1] =
     {
-        .address = 0u,
-        .data_b =
+        .pageBuf =
         {
-            [0 ... DIB_C55FMC_SIZE_OF_QUAD_PAGE-1] = 0u,
+            .address = 0u,
+            .data_b =
+            {
+                [0 ... EAP_C55FMC_SIZE_OF_QUAD_PAGE-1] = 0u,
+            },
         },
         .state = dib_bufSt_free,
     },
@@ -108,7 +107,7 @@ static unsigned int _noFreeInputBufs = NO_DATA_BUFFERS;
  * Function implementation
  */
 
-/** 
+/**
  * Return a buffer after filling it.
  *   @param[in] pBuf
  * The buffer by reference.
@@ -147,6 +146,7 @@ unsigned int dib_getNoFreeInputBuffers(void)
     return _noFreeInputBufs;
 }
 
+
 /**
  * Get a buffer for writing input data.\n
  *   After filling the buffer with data, the buffer needs to be released again using
@@ -157,26 +157,36 @@ unsigned int dib_getNoFreeInputBuffers(void)
 dib_pageProgramBuffer_t *dib_acquireInputBuffer(void)
 {
     dib_pageProgramBuffer_t *pBuf = NULL;
-    
+
     for(unsigned int u=0u; u<NO_DATA_BUFFERS; ++u)
         if(_inputBufAry[u].state == dib_bufSt_free)
             pBuf = &_inputBufAry[u];
 
     if(pBuf != NULL)
     {
-        memset(&pBuf->data_b[0], 0xFF, sizeof(pBuf->data_b));
+        memset(&pBuf->pageBuf.data_b[0], 0xFF, sizeof(pBuf->pageBuf.data_b));
         pBuf->state = dib_bufSt_empty;
 #ifdef DEBUG
-        pBuf->address = 0u;
+        pBuf->pageBuf.address = 0u;
 #endif
-        
+
         -- _noFreeInputBufs;
-        assert(_noFreeInputBufs <= NO_DATA_BUFFERS); 
-    }        
+        assert(_noFreeInputBufs <= NO_DATA_BUFFERS);
+    }
 
     return pBuf;
 
 } /* dib_getInputBuffer */
+
+
+/**
+ * Get the data contents of a buffer.
+ */
+eap_quadPageProgramBuffer_t *dib_getBufferPayload(dib_pageProgramBuffer_t *pBuf)
+{
+    return &pBuf->pageBuf;
+}
+
 
 /**
  * Check for an address if it points into a given buffer.
@@ -190,14 +200,14 @@ bool dib_isAddressInBuffer(dib_pageProgramBuffer_t * const pBuf, uint32_t addres
     if(pBuf->state == dib_bufSt_empty)
     {
         /* Buffer is not yet decided for a particular address. It will always match. */
-        assert(pBuf->address == 0u);
-        pBuf->address = GET_ADDR_OF_QUAD_PAGE(address);
+        assert(pBuf->pageBuf.address == 0u);
+        pBuf->pageBuf.address = GET_ADDR_OF_QUAD_PAGE(address);
         return true;
     }
     else
     {
         /* Buffer is in (filling) use. We need to compare the address. */
-        return pBuf->address == GET_ADDR_OF_QUAD_PAGE(address);
+        return pBuf->pageBuf.address == GET_ADDR_OF_QUAD_PAGE(address);
     }
 } /* dib_isAddressInBuffer */
 
@@ -215,17 +225,17 @@ uint32_t dib_writeDataIntoBuffer( dib_pageProgramBuffer_t * const pBuf
        address of the flash page, not the data address. */
     if(pBuf->state == dib_bufSt_empty)
     {
-        assert(pBuf->address == 0u);
-        pBuf->address = GET_ADDR_OF_QUAD_PAGE(address);
+        assert(pBuf->pageBuf.address == 0u);
+        pBuf->pageBuf.address = GET_ADDR_OF_QUAD_PAGE(address);
         pBuf->state = dib_bufSt_filling;
     }
 
-    const uint32_t endAddrPage = pBuf->address + DIB_C55FMC_SIZE_OF_QUAD_PAGE;
+    const uint32_t endAddrPage = pBuf->pageBuf.address + EAP_C55FMC_SIZE_OF_QUAD_PAGE;
 
     /* Check, how many bytes from the input fit into the quad-page, which is represented
        by the buffer. */
     uint32_t noBytesToCopy;
-    if(GET_ADDR_OF_QUAD_PAGE(address) == pBuf->address)
+    if(GET_ADDR_OF_QUAD_PAGE(address) == pBuf->pageBuf.address)
     {
         /* The address points into the buffer's quad-page. At least one byte will fit. */
         if(address + noBytes > endAddrPage)
@@ -235,11 +245,11 @@ uint32_t dib_writeDataIntoBuffer( dib_pageProgramBuffer_t * const pBuf
         assert(noBytesToCopy > 0  &&  noBytesToCopy <= noBytes);
 
         /* Address as offset to beginning of quad page. */
-        const uint32_t addrOffset = GET_ADDR_OFFS_IN_QUAD_PAGE(address);
-        assert(addrOffset < sizeof(pBuf->data_b));
+        const uint32_t addrOffset = EAP_GET_ADDR_OFFS_IN_QUAD_PAGE(address);
+        assert(addrOffset < sizeof(pBuf->pageBuf.data_b));
 
         /* Copy those bytes, which fit into the page. */
-        memcpy(&pBuf->data_b[addrOffset], dataAry, noBytesToCopy);
+        memcpy(&pBuf->pageBuf.data_b[addrOffset], dataAry, noBytesToCopy);
     }
     else
     {
@@ -263,20 +273,30 @@ uint32_t dib_writeDataIntoBuffer( dib_pageProgramBuffer_t * const pBuf
 dib_pageProgramBuffer_t *dib_acquireProgramBuffer(void)
 {
     dib_pageProgramBuffer_t *pBuf = NULL;
-    
+
     for(unsigned int u=0u; u<NO_DATA_BUFFERS; ++u)
         if(_inputBufAry[u].state == dib_bufSt_toBePrgd)
             pBuf = &_inputBufAry[u];
-    
+
     return pBuf;
-    
+
 } /* dib_acquireProgramBuffer */
 
 
-/* Flush a buffer. */
+/**
+ * Return a buffer after use.
+ *   @param[in] pBuf
+ * The buffer, which had before been acquired with either dib_acquireInputBuffer() or
+ * dib_acquireProgramBuffer().
+ *   @param[in] submitForProgramming
+ * If the buffer had been acquired for filling then this flag is now set to \a true. This
+ * hands the buffer over to the flash ROM driver core for programming.\n
+ *   If it should be discarded or if it had been acquired for programming, then pass \a
+ * false.
+ */
 void dib_releaseBuffer(dib_pageProgramBuffer_t * const pBuf, bool submitForProgramming)
 {
     releaseBuffer(pBuf, submitForProgramming);
-    
+
 } /* dib_releaseBuffer */
 

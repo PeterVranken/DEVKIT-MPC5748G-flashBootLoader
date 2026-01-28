@@ -26,6 +26,7 @@
  *   eap_abortEraseAndProgram
  * Local functions
  *   disableAllFlashBlocks
+ *   enableFlashBlocks
  */
 
 /*
@@ -41,10 +42,6 @@
 #include <assert.h>
 
 #include "rom_flashRom.h"
-
-/** @todo Define either MCU_MPC5748G, MCU_MPC5775B or MCU_MPC5775E to select the MCU, which
-    this module is compiled for. */
-#define MCU_MPC5748G
 
 /* Include the appropriate MCU header. */
 #if defined(MCU_MPC5748G)
@@ -68,6 +65,26 @@
  * Local type definitions
  */
 
+/** The description of a flash block. */
+typedef struct 
+{
+    /** Address of first byte of flash block. */
+    uint32_t addrFrom;
+    
+    /** Address of first byte (exclusive) of flash block. */
+    uint32_t addrTo;
+    
+    /** The index of the RWW partition. */
+    uint8_t idxPartition;
+    
+    /** The index of the lock or select register, which controls the block. */
+    uint8_t idxLockReg;
+    
+    /** A bit mask with a single bit set. The bit masks the control bit for the given flash
+        block in the related lock or select register \a idxLockReg. */
+    uint32_t bitMaskLockReg;
+    
+} flashBlockDesc_t;
 
 /*
  * Local prototypes
@@ -78,6 +95,43 @@
  * Data definitions
  */
 
+static const flashBlockDesc_t RODATA(flashBlockDescAry)[] =
+{
+#if defined(MCU_MPC5748G)
+    {.addrFrom = 0x00FC0000u, .addrTo = 0x00FC8000u, .idxPartition = 0u, .idxLockReg = 0u, .bitMaskLockReg = 0x00040000u,},  /* 32KB Code Flash block */
+    {.addrFrom = 0x00FC8000u, .addrTo = 0x00FD0000u, .idxPartition = 0u, .idxLockReg = 0u, .bitMaskLockReg = 0x00080000u,},  /* 32KB Code Flash block */
+    {.addrFrom = 0x00FD0000u, .addrTo = 0x00FD8000u, .idxPartition = 1u, .idxLockReg = 0u, .bitMaskLockReg = 0x00100000u,},  /* 32KB Code Flash block */
+    {.addrFrom = 0x00FD8000u, .addrTo = 0x00FE0000u, .idxPartition = 1u, .idxLockReg = 0u, .bitMaskLockReg = 0x00200000u,},  /* 32KB Code Flash block */
+    {.addrFrom = 0x00FE0000u, .addrTo = 0x00FF0000u, .idxPartition = 0u, .idxLockReg = 0u, .bitMaskLockReg = 0x00400000u,},  /* 64KB Code Flash block */
+    {.addrFrom = 0x00FF0000u, .addrTo = 0x01000000u, .idxPartition = 1u, .idxLockReg = 0u, .bitMaskLockReg = 0x01000000u,},  /* 64KB Code Flash block */
+    {.addrFrom = 0x01000000u, .addrTo = 0x01040000u, .idxPartition = 6u, .idxLockReg = 2u, .bitMaskLockReg = 0x00000001u,},  /* 256KB Code Flash block */
+    {.addrFrom = 0x01040000u, .addrTo = 0x01080000u, .idxPartition = 6u, .idxLockReg = 2u, .bitMaskLockReg = 0x00000002u,},  /* 256KB Code Flash block */
+    {.addrFrom = 0x01080000u, .addrTo = 0x010C0000u, .idxPartition = 6u, .idxLockReg = 2u, .bitMaskLockReg = 0x00000004u,},  /* 256KB Code Flash block */
+    {.addrFrom = 0x010C0000u, .addrTo = 0x01100000u, .idxPartition = 6u, .idxLockReg = 2u, .bitMaskLockReg = 0x00000008u,},  /* 256KB Code Flash block */
+    {.addrFrom = 0x01100000u, .addrTo = 0x01140000u, .idxPartition = 6u, .idxLockReg = 2u, .bitMaskLockReg = 0x00000010u,},  /* 256KB Code Flash block */
+    {.addrFrom = 0x01140000u, .addrTo = 0x01180000u, .idxPartition = 6u, .idxLockReg = 2u, .bitMaskLockReg = 0x00000020u,},  /* 256KB Code Flash block */
+    {.addrFrom = 0x01180000u, .addrTo = 0x011C0000u, .idxPartition = 6u, .idxLockReg = 2u, .bitMaskLockReg = 0x00000040u,},  /* 256KB Code Flash block */
+    {.addrFrom = 0x011C0000u, .addrTo = 0x01200000u, .idxPartition = 6u, .idxLockReg = 2u, .bitMaskLockReg = 0x00000080u,},  /* 256KB Code Flash block */
+    {.addrFrom = 0x01200000u, .addrTo = 0x01240000u, .idxPartition = 7u, .idxLockReg = 2u, .bitMaskLockReg = 0x00000100u,},  /* 256KB Code Flash block */
+    {.addrFrom = 0x01240000u, .addrTo = 0x01280000u, .idxPartition = 7u, .idxLockReg = 2u, .bitMaskLockReg = 0x00000200u,},  /* 256KB Code Flash block */
+    {.addrFrom = 0x01280000u, .addrTo = 0x012C0000u, .idxPartition = 7u, .idxLockReg = 2u, .bitMaskLockReg = 0x00000400u,},  /* 256KB Code Flash block */
+    {.addrFrom = 0x012C0000u, .addrTo = 0x01300000u, .idxPartition = 7u, .idxLockReg = 2u, .bitMaskLockReg = 0x00000800u,},  /* 256KB Code Flash block */
+    {.addrFrom = 0x01300000u, .addrTo = 0x01340000u, .idxPartition = 7u, .idxLockReg = 2u, .bitMaskLockReg = 0x00001000u,},  /* 256KB Code Flash block */
+    {.addrFrom = 0x01340000u, .addrTo = 0x01380000u, .idxPartition = 7u, .idxLockReg = 2u, .bitMaskLockReg = 0x00002000u,},  /* 256KB Code Flash block */
+    {.addrFrom = 0x01380000u, .addrTo = 0x013C0000u, .idxPartition = 7u, .idxLockReg = 2u, .bitMaskLockReg = 0x00004000u,},  /* 256KB Code Flash block */
+    {.addrFrom = 0x013C0000u, .addrTo = 0x01400000u, .idxPartition = 7u, .idxLockReg = 2u, .bitMaskLockReg = 0x00008000u,},  /* 256KB Code Flash block */
+    {.addrFrom = 0x01400000u, .addrTo = 0x01440000u, .idxPartition = 8u, .idxLockReg = 2u, .bitMaskLockReg = 0x00010000u,},  /* 256KB Code Flash block */
+    {.addrFrom = 0x01440000u, .addrTo = 0x01480000u, .idxPartition = 8u, .idxLockReg = 2u, .bitMaskLockReg = 0x00020000u,},  /* 256KB Code Flash block */
+    {.addrFrom = 0x01480000u, .addrTo = 0x014C0000u, .idxPartition = 8u, .idxLockReg = 2u, .bitMaskLockReg = 0x00040000u,},  /* 256KB Code Flash block */
+    {.addrFrom = 0x014C0000u, .addrTo = 0x01500000u, .idxPartition = 9u, .idxLockReg = 2u, .bitMaskLockReg = 0x00080000u,},  /* 256KB Code Flash block */
+    {.addrFrom = 0x01500000u, .addrTo = 0x01540000u, .idxPartition = 9u, .idxLockReg = 2u, .bitMaskLockReg = 0x00100000u,},  /* 256KB Code Flash block */
+    {.addrFrom = 0x01540000u, .addrTo = 0x01580000u, .idxPartition = 9u, .idxLockReg = 2u, .bitMaskLockReg = 0x00200000u,},  /* 256KB Code Flash block */
+#elif defined(MCU_MPC5775B) || defined(MCU_MPC5775E)
+# error Specify flash block configuration for MPC5775B/E
+#elif defined(MCU_MPC5777C)
+# error Specify flash block configuration for MPC5777C
+#endif
+};
 
 /*
  * Function implementation
@@ -120,11 +174,160 @@ static void disableAllFlashBlocks(void)
 
 
 /**
+ * Enable those flash blocks, which are required for an intended erase or program activity.
+ *   @param[in] addressFrom
+ * The required blocks are specified by the address range, which is affected by the
+ * intended activity. All flash blocks, which share at least one byte with the specified
+ * address range, will be enabled, all others don't. This is the first address of the
+ * range.\n
+ *   Note, addressFrom and \a noBytes need to from a valid, supported address range in the
+ * flashable area. This can be checked beforehand using rom_isValidFlashAddressRange().
+ *   @param[in] noBytes
+ * This is the length in Byte of the address range.\n
+ *   Note, if the intended activity is programming, then this value needs to be
+ * #EAP_C55FMC_SIZE_OF_QUAD_PAGE, the size of a single programmed (quad-)page.
+ *   @param[in] isErase
+ * A Boolean flag selects the intended activity. Pass \a true if the blocks are enabled for
+ * erasure and \a false if they are enabled for programming.
+ */
+static void enableFlashBlocks(uint32_t addressFrom, uint32_t noBytes, bool isErase)
+{
+    const uint32_t addressTo = addressFrom + noBytes;
+    
+    /* We address to the lock and select registers as an array. */
+    _Static_assert
+        ( (uintptr_t)&C55FMC->LOCK1 == (uintptr_t)&C55FMC->LOCK0 + 1*sizeof(C55FMC->LOCK0)
+          &&  (uintptr_t)&C55FMC->LOCK2 == (uintptr_t)&C55FMC->LOCK0 + 2*sizeof(C55FMC->LOCK0)
+          &&  (uintptr_t)&C55FMC->LOCK3 == (uintptr_t)&C55FMC->LOCK0 + 3*sizeof(C55FMC->LOCK0)
+          &&  (uintptr_t)&C55FMC->SEL1 == (uintptr_t)&C55FMC->SEL0 + 1*sizeof(C55FMC->SEL0)
+          &&  (uintptr_t)&C55FMC->SEL2 == (uintptr_t)&C55FMC->SEL0 + 2*sizeof(C55FMC->SEL0)
+          &&  (uintptr_t)&C55FMC->SEL3 == (uintptr_t)&C55FMC->SEL0 + 3*sizeof(C55FMC->SEL0)
+        , "Addressing of registers as an array fails"
+        );
+
+    /* We always program single quad-pages. */
+    assert(isErase ||  noBytes == EAP_C55FMC_SIZE_OF_QUAD_PAGE);
+    
+    /* If we see an overflow then we definitly have an invalid address space. (ROM at the
+       very end of the address space is not supported by the implementation.) A valid adress
+       ranges is a prerequiste of calling this function. */
+    assert(addressTo >= addressFrom);
+
+    /* We check for each flash block if it is touched and needs to be enabled. We don't do
+       the opposite; we don't check if all enabled flash blocks really cover the complete
+       desired address range. If the address range is valid, should be checked beforehand.
+         The search loop is optimize for the frequent calls of this function in programming
+       mode: We inspect the last recently enabled block first. */
+    _Static_assert(sizeOfAry(flashBlockDescAry) <= 256u, "Overflow of uint8_t idxBlk_");
+    static uint8_t SBSS_OS(idxBlk_) = 0u;
+    for(unsigned int u=0u; u<sizeOfAry(flashBlockDescAry); ++u, ++idxBlk_)
+    {
+        if(idxBlk_ >= sizeOfAry(flashBlockDescAry))
+            idxBlk_ = 0u;
+            
+        const flashBlockDesc_t * const pBlkDesc = &flashBlockDescAry[idxBlk_];
+        if(pBlkDesc->addrFrom < addressTo  &&  pBlkDesc->addrTo > addressFrom)
+        {
+            /* This flash block needs to be unlocked. */
+            volatile uint32_t * const lockRegAry = &C55FMC->LOCK0;
+            assert((lockRegAry[pBlkDesc->idxLockReg] & pBlkDesc->bitMaskLockReg) != 0u);
+            lockRegAry[pBlkDesc->idxLockReg] &= ~pBlkDesc->bitMaskLockReg;
+            
+            /* Erased blocks need to be explicitly selected. */
+            if(isErase)
+            {
+                volatile uint32_t * const selectRegAry = &C55FMC->SEL0;
+                assert((selectRegAry[pBlkDesc->idxLockReg] & pBlkDesc->bitMaskLockReg) == 0u);
+                selectRegAry[pBlkDesc->idxLockReg] |= pBlkDesc->bitMaskLockReg;
+                #if 1
+                iprintf( "Select flash block %06lX..%06lX for erasure.\r\n"
+                       , pBlkDesc->addrFrom
+                       , pBlkDesc->addrTo
+                       );
+                #endif
+            }
+            else
+            {
+                /* We always program single quad-pages, so there can't be more than one
+                   touched flash block. */
+                #if 1
+                iprintf( "Unlock flash block %06lX..%06lX for programming.\r\n"
+                       , pBlkDesc->addrFrom
+                       , pBlkDesc->addrTo
+                       );
+                #endif
+                break;
+            }
+        }
+    } /* for(All configured flash blocks.) */
+
+} /* enableFlashBlocks */
+
+
+/**
  * Initialize the flash ROM driver.
  */
 void eap_osInitFlashRomDriver(void)
 {
     eap_abortEraseAndProgram();
+
+#ifdef DEBUG
+    for(unsigned int idxBlk=0u; idxBlk<sizeOfAry(flashBlockDescAry); ++idxBlk)
+    {
+        const flashBlockDesc_t * const pBlkDesc = &flashBlockDescAry[idxBlk];
+        
+        /* The flash driver generally doesn't consider overflow in address calculations and
+           it uses end addresses exclusively. This make the code fail for architectures,
+           which have a flash ROM block at the very end of the implementation range of
+           address variables, which uses type uint32_t. The end address of such a block
+           would become 0 - which could be correct but which is simply not supported. (If
+           your architecture by accident has such a flash block then the easiest way out
+           would be sacrificing the last page of that block.) */
+        assert(pBlkDesc->addrTo > 0u);
+        
+        /* A flash block must not be empty. */
+        assert(pBlkDesc->addrFrom < pBlkDesc->addrTo);
+        
+        /* A flash-block must begin and end on a quad-page boundary. */
+        assert(EAP_GET_ADDR_OFFS_IN_QUAD_PAGE(pBlkDesc->addrFrom) == 0u
+               &&  EAP_GET_ADDR_OFFS_IN_QUAD_PAGE(pBlkDesc->addrTo) == 0u
+              );
+              
+        /* We have 4 lock and select registers. */
+        assert(pBlkDesc->idxLockReg < 4u);
+        
+        /* Each flash block is represented by excately one bit in these registers. */
+        #define HAS_ONE_BIT_SET(x)  ((x)!=0u && ((x)&((x)-1u))==0u)
+        assert(HAS_ONE_BIT_SET(pBlkDesc->bitMaskLockReg));
+        #undef HAS_ONE_BIT_SET
+
+# if defined(MCU_MPC5748G)
+        /* For the MPC5748G, the implementation of the address range validity is based on
+           the fact, that all flash blocks form a single, contiguous address space. Gaps
+           are not considered. */
+        assert(idxBlk == 0u  ||  pBlkDesc->addrFrom == flashBlockDescAry[idxBlk-1].addrTo);
+# endif
+        
+
+    } /* for(Check flash block specification table entries for plausibility) */
+    
+# if defined(MCU_MPC5748G)
+    /* For the MPC5748G, the implementation of the address range validity uses hard-coded
+       address boundaries. We need to check consistency. */
+    assert(rom_isValidFlashAddressRange(flashBlockDescAry[0].addrFrom, /*size*/ 0u)
+           && !rom_isValidFlashAddressRange(flashBlockDescAry[0].addrFrom-1u, /*size*/ 0u)
+           && rom_isValidFlashAddressRange
+                                ( flashBlockDescAry[sizeOfAry(flashBlockDescAry)-1].addrTo
+                                , /*size*/ 0u
+                                )
+           && !rom_isValidFlashAddressRange
+                                ( flashBlockDescAry[sizeOfAry(flashBlockDescAry)-1].addrTo+1u
+                                , /*size*/ 0u
+                                )
+          );
+# endif
+
+#endif /* DEBUG */
 
 } /* eap_osInitFlashRomDriver */
 
@@ -144,22 +347,27 @@ void eap_osInitFlashRomDriver(void)
  * The blocks to erase are specified by the address range, which needs to become blank. All
  * flash blocks, which share at least one byte with the specified address range, will be
  * erased, all others don't. This is the first blanked address.
- *   @param[in] addressTo
- * End address of blanked address range (exclusive).
+ *   @param[in] noBytes
+ * This is the length in Byte of the address range.
  */
-rom_errorCode_t eap_osStartEraseFlashBlocks(uint32_t addressFrom, uint32_t addressTo)
+rom_errorCode_t eap_osStartEraseFlashBlocks(uint32_t addressFrom, uint32_t noBytes)
 {
     rom_errorCode_t retCode;
+    const uint32_t mcr = C55FMC->MCR;
+
+    if(!rom_isValidFlashAddressRange(addressFrom, noBytes))
+    {
+        retCode = rom_err_badAddressRange;      
+    }
 
     /* To initiate erasure, no other operation must be in progress. */
-    const uint32_t mcr = C55FMC->MCR;
     #define BITS_TO_BE_CLEARED  (C55FMC_MCR_ERS_MASK     \
                                  |C55FMC_MCR_PGM_MASK    \
                                  |C55FMC_MCR_EHV_MASK    \
                                  |C55FMC_MCR_PSUS_MASK   \
                                  |C55FMC_MCR_ESUS_MASK   \
                                 )
-    if((mcr & BITS_TO_BE_CLEARED) == 0u)
+    else if((mcr & BITS_TO_BE_CLEARED) == 0u)
     #undef BITS_TO_BE_CLEARED
     {
         /* Enable the flash blocks for erase, which are touched by the address range. */
@@ -167,9 +375,10 @@ rom_errorCode_t eap_osStartEraseFlashBlocks(uint32_t addressFrom, uint32_t addre
         C55FMC->MCR |= C55FMC_MCR_ERS_MASK;
 
 // TODO Generalize
-        assert(addressFrom >= 0xFC0000u  &&  addressTo <= 0xFC8000u);
-        C55FMC->LOCK0 &= ~C55FMC_LOCK0_LOWLOCK(4u); /* Bit 2: 0xFC0000..0xFC8000. */
-        C55FMC->SEL0 = C55FMC_LOCK0_LOWLOCK(4u); /* Bit 2: 0xFC0000..0xFC8000. */
+//        assert(addressFrom >= 0xFC0000u  &&  addressFrom+noBytes <= 0xFC8000u);
+//        C55FMC->LOCK0 &= ~C55FMC_LOCK0_LOWLOCK(4u); /* Bit 2: 0xFC0000..0xFC8000. */
+//        C55FMC->SEL0 = C55FMC_LOCK0_LOWLOCK(4u); /* Bit 2: 0xFC0000..0xFC8000. */
+        enableFlashBlocks(addressFrom, noBytes, /*isErase*/ true);
 
         /* The interlock write needs to be done prior to enabling the high voltage. We
            need to write anywhere into a flash block to be erased. For simplicity, we
@@ -190,8 +399,8 @@ rom_errorCode_t eap_osStartEraseFlashBlocks(uint32_t addressFrom, uint32_t addre
         eap_abortEraseAndProgram();
 
 // TODO Generalize and centralize
-        C55FMC->LOCK0 |= C55FMC_LOCK0_LOWLOCK(4u); /* Bit 2: 0xFC0000..0xFC8000. */
-        C55FMC->SEL0 &= ~C55FMC_LOCK0_LOWLOCK(4u); /* Bit 2: 0xFC0000..0xFC8000. */
+//        C55FMC->LOCK0 |= C55FMC_LOCK0_LOWLOCK(4u); /* Bit 2: 0xFC0000..0xFC8000. */
+//        C55FMC->SEL0 &= ~C55FMC_LOCK0_LOWLOCK(4u); /* Bit 2: 0xFC0000..0xFC8000. */
         retCode = rom_err_unexpectedHwState;
     }
 
@@ -247,12 +456,13 @@ rom_errorCode_t eap_osGetStatusEraseFlashBlocks(void)
         eap_abortEraseAndProgram();
 
 // TODO Generalize and centralize
-        C55FMC->LOCK0 |= C55FMC_LOCK0_LOWLOCK(4u); /* Bit 2: 0xFC0000..0xFC8000. */
-        C55FMC->SEL0 &= ~C55FMC_LOCK0_LOWLOCK(4u); /* Bit 2: 0xFC0000..0xFC8000. */
+//        C55FMC->LOCK0 |= C55FMC_LOCK0_LOWLOCK(4u); /* Bit 2: 0xFC0000..0xFC8000. */
+//        C55FMC->SEL0 &= ~C55FMC_LOCK0_LOWLOCK(4u); /* Bit 2: 0xFC0000..0xFC8000. */
     }
 
     return retCode;
-}
+    
+} /* eap_osGetStatusEraseFlashBlocks */
 
 
 /**
@@ -268,26 +478,37 @@ rom_errorCode_t eap_osGetStatusEraseFlashBlocks(void)
  *  @param[in] pPrgDataBuf
  * The buffer with the data to program and the target address in flash ROM.
  */
-rom_errorCode_t eap_osStartProgramQuadPage(dib_pageProgramBuffer_t * const pPrgDataBuf)
+rom_errorCode_t eap_osStartProgramQuadPage(eap_quadPageProgramBuffer_t * const pPrgDataBuf)
 {
     rom_errorCode_t retCode;
-
-    /* To initiate programming, no other operation must be in progress. */
     const uint32_t mcr = C55FMC->MCR;
+    
+    if( EAP_GET_ADDR_OFFS_IN_QUAD_PAGE(pPrgDataBuf->address) != 0u
+        || !rom_isValidFlashAddressRange(pPrgDataBuf->address, EAP_C55FMC_SIZE_OF_QUAD_PAGE)
+      )
+    {
+        retCode = rom_err_badAddressRange;      
+    }
+    
+    /* To initiate programming, no other operation must be in progress. */
     #define BITS_TO_BE_CLEARED  (C55FMC_MCR_ERS_MASK     \
                                  |C55FMC_MCR_PGM_MASK    \
                                  |C55FMC_MCR_EHV_MASK    \
                                  |C55FMC_MCR_PSUS_MASK   \
                                  |C55FMC_MCR_ESUS_MASK   \
                                 )
-    if((mcr & BITS_TO_BE_CLEARED) == 0u)
+    else if((mcr & BITS_TO_BE_CLEARED) == 0u)
     #undef BITS_TO_BE_CLEARED
     {
         /* Enable the flash block for programming, which the wanted quad-page sits in. */
 // TODO Generalize
-        assert(pPrgDataBuf->address >= 0xFC0000u  &&  pPrgDataBuf->address+128u <= 0xFC8000u);
-        C55FMC->LOCK0 &= ~C55FMC_LOCK0_LOWLOCK(4u); /* Bit 2: 0xFC0000..0xFC8000. */
-
+//        assert(pPrgDataBuf->address >= 0xFC0000u  &&  pPrgDataBuf->address+128u <= 0xFC8000u);
+//        C55FMC->LOCK0 &= ~C55FMC_LOCK0_LOWLOCK(4u); /* Bit 2: 0xFC0000..0xFC8000. */
+        enableFlashBlocks( pPrgDataBuf->address
+                         , EAP_C55FMC_SIZE_OF_QUAD_PAGE
+                         , /*isErase*/ false
+                         );
+        
         /* Set MCR[PGM] to start program operation. */
         C55FMC->MCR |= C55FMC_MCR_PGM_MASK;
 
@@ -297,13 +518,9 @@ rom_errorCode_t eap_osStartProgramQuadPage(dib_pageProgramBuffer_t * const pPrgD
            same time the required interlock write. */
         const uint32_t *pRd = &pPrgDataBuf->data_u32[0];
         volatile uint32_t *pWr = (volatile uint32_t*)pPrgDataBuf->address;
-        // TODO Check before setting PGM?
-        assert(((uintptr_t)pWr & (DIB_C55FMC_SIZE_OF_QUAD_PAGE-1u)) == 0u
-               && rom_isValidFlashAddressRange((uint32_t)pWr, DIB_C55FMC_SIZE_OF_QUAD_PAGE)
-              );
 
-        _Static_assert(DIB_C55FMC_SIZE_OF_QUAD_PAGE % 4u == 0u, "Bad configuration");
-        for(unsigned int u=0u; u<DIB_C55FMC_SIZE_OF_QUAD_PAGE/4u; ++u)
+        _Static_assert(EAP_C55FMC_SIZE_OF_QUAD_PAGE % 4u == 0u, "Bad configuration");
+        for(unsigned int u=0u; u<EAP_C55FMC_SIZE_OF_QUAD_PAGE/4u; ++u)
             * pWr++ = * pRd++;
 
         /* After filling the write buffer, we set MCR[EHV] to turn on the high voltage
@@ -320,9 +537,8 @@ rom_errorCode_t eap_osStartProgramQuadPage(dib_pageProgramBuffer_t * const pPrgD
         eap_abortEraseAndProgram();
 
 // TODO Generalize and centralize
-        C55FMC->LOCK0 |= C55FMC_LOCK0_LOWLOCK(4u); /* Bit 2: 0xFC0000..0xFC8000. */
-        C55FMC->SEL0 &= ~C55FMC_LOCK0_LOWLOCK(4u); /* Bit 2: 0xFC0000..0xFC8000. */
-        
+//        C55FMC->LOCK0 |= C55FMC_LOCK0_LOWLOCK(4u); /* Bit 2: 0xFC0000..0xFC8000. */
+//        C55FMC->SEL0 &= ~C55FMC_LOCK0_LOWLOCK(4u); /* Bit 2: 0xFC0000..0xFC8000. */
         retCode = rom_err_unexpectedHwState;
     }
 
@@ -377,10 +593,9 @@ rom_errorCode_t eap_osGetStatusProgramQuadPage(void)
         eap_abortEraseAndProgram();
 
 // TODO Generalize and centralize
-        C55FMC->LOCK0 |= C55FMC_LOCK0_LOWLOCK(4u); /* Bit 2: 0xFC0000..0xFC8000. */
-        C55FMC->SEL0 &= ~C55FMC_LOCK0_LOWLOCK(4u); /* Bit 2: 0xFC0000..0xFC8000. */
+//        C55FMC->LOCK0 |= C55FMC_LOCK0_LOWLOCK(4u); /* Bit 2: 0xFC0000..0xFC8000. */
+//        C55FMC->SEL0 &= ~C55FMC_LOCK0_LOWLOCK(4u); /* Bit 2: 0xFC0000..0xFC8000. */
     }
-
 
     return retCode;
 
@@ -410,12 +625,12 @@ void eap_abortEraseAndProgram(void)
 
 /***************************** Test, temporary code ******************/
 
-dib_pageProgramBuffer_t BSS_OS(eap_prgDataBuf) =
+eap_quadPageProgramBuffer_t BSS_OS(eap_prgDataBuf) =
 {
     .address = 0u,
     .data_b =
     {
-        [0 ... (DIB_C55FMC_SIZE_OF_QUAD_PAGE-1u)] = 0u,
+        [0 ... (EAP_C55FMC_SIZE_OF_QUAD_PAGE-1u)] = 0u,
     },
 };
 unsigned int eap_noWaitCyclesErase = 0u
@@ -443,13 +658,12 @@ bool eap_firstTest(bool start)
         eap_cntFsm = 0u;
         eap_prgDataBuf.address = 0xFC0100u;
         static uint8_t SDATA_OS(startVal_) = 1u;
-        for(unsigned int u=0u; u<DIB_C55FMC_SIZE_OF_QUAD_PAGE; ++u)
+        for(unsigned int u=0u; u<EAP_C55FMC_SIZE_OF_QUAD_PAGE; ++u)
             eap_prgDataBuf.data_b[u] = (startVal_ + u) & 0xFFu;
         ++ startVal_;
 
         eap_resultStartErase = eap_osStartEraseFlashBlocks( eap_prgDataBuf.address
-                                                          , eap_prgDataBuf.address
-                                                            + DIB_C55FMC_SIZE_OF_QUAD_PAGE
+                                                          , EAP_C55FMC_SIZE_OF_QUAD_PAGE
                                                           );
         if(eap_resultStartErase == rom_err_processPending)
         {

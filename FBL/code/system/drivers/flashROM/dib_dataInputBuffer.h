@@ -29,50 +29,19 @@
 #include <stddef.h>
 
 #include "typ_types.h"
+#include "eap_eraseAndProgram.h"
 
 /*
  * Defines
  */
-
-/** The needed buffer size in Byte. It reflects the property of the flash array, how many
-    bytes can be programmed at once, and must not be changed. */
-#define DIB_C55FMC_SIZE_OF_QUAD_PAGE    128u
 
 
 /*
  * Global type definitions
  */
 
-/** A data input buffer for programming. The base programming step, writing a quad page of
-    128, can be done with the information found in the buffer. */
-typedef struct dib_pageProgramBuffer_t
-{
-    /** The address to program the buffer data at. It is the global address in the address
-        space of the MCU and it considers the quad-page alignment constraint of the flash
-        ROM array. */
-    uint32_t address;
-
-    /** The data in different word widths. */
-    union
-    {
-        /** The data as 128 bytes. */
-        uint8_t data_b[DIB_C55FMC_SIZE_OF_QUAD_PAGE];
-
-        /** The data as 8*4 words. */
-        uint32_t data_u32[DIB_C55FMC_SIZE_OF_QUAD_PAGE / 4u];
-    };
-
-    /** The state of the buffer, like filling, completed, being programmed. */
-    enum {dib_bufSt_free, dib_bufSt_empty, dib_bufSt_filling, dib_bufSt_toBePrgd, } state;
-
-} dib_pageProgramBuffer_t;
-
-_Static_assert( offsetof(dib_pageProgramBuffer_t, data_b)
-                == offsetof(dib_pageProgramBuffer_t, data_u32)
-                &&  sizeoffield(dib_pageProgramBuffer_t, data_b)
-                    == sizeoffield(dib_pageProgramBuffer_t, data_u32)
-              , "Invalid data modelling"
-              );
+//struct dib_pageProgramBuffer_t;
+typedef struct dib_pageProgramBuffer_t dib_pageProgramBuffer_t;
 
 /*
  * Global data declarations
@@ -88,6 +57,9 @@ unsigned int dib_getNoFreeInputBuffers(void);
 
 /* Get a buffer for writing input data. */
 dib_pageProgramBuffer_t *dib_acquireInputBuffer(void);
+
+/* Get the data contents of a buffer. */
+eap_quadPageProgramBuffer_t *dib_getBufferPayload(dib_pageProgramBuffer_t *pBuf);
 
 /* Check for an address if it points into a given buffer. */
 bool dib_isAddressInBuffer(dib_pageProgramBuffer_t *pBuf, uint32_t address);
