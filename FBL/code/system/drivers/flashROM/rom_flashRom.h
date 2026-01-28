@@ -45,9 +45,11 @@ typedef enum
 {
     rom_err_noError,            /**< Operation succeeded without an error. */
     rom_err_badAddressRange,    /**< Operation rejected due to bad/invalid addresses. */
+    rom_err_quadPageNotBlank,   /**< Attempt to program a non-erased quad-page. */
     rom_err_processPending,     /**< Operation successfully initiated, is still ongoing. */
     rom_err_c55FmcErrorInPeg,   /**< C55FMC reported an error during flash array programming.*/
     rom_err_unexpectedHwState,  /**< HW is in unexpected state, maybe due to bad API use. */
+    rom_err_verifyFailed,       /**< Programming of a quad-page ended with a data error. */
     rom_err_invalidErrorCode,   /**< Unused error code, e.g., to initialize variables. */
     
 } rom_errorCode_t;

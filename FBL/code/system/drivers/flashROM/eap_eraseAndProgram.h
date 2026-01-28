@@ -76,15 +76,22 @@ typedef struct
         /** The data as 128 bytes. */
         uint8_t data_b[EAP_C55FMC_SIZE_OF_QUAD_PAGE];
 
-        /** The data as 8*4 words. */
+        /** The data as 32 words. */
         uint32_t data_u32[EAP_C55FMC_SIZE_OF_QUAD_PAGE / 4u];
+
+        /** The data as 16 double words. */
+        uint64_t data_u64[EAP_C55FMC_SIZE_OF_QUAD_PAGE / 8u];
     };
 } eap_quadPageProgramBuffer_t;
 
 _Static_assert( offsetof(eap_quadPageProgramBuffer_t, data_b)
                 == offsetof(eap_quadPageProgramBuffer_t, data_u32)
+                &&  offsetof(eap_quadPageProgramBuffer_t, data_b)
+                    == offsetof(eap_quadPageProgramBuffer_t, data_u64)
                 &&  sizeoffield(eap_quadPageProgramBuffer_t, data_b)
                     == sizeoffield(eap_quadPageProgramBuffer_t, data_u32)
+                &&  sizeoffield(eap_quadPageProgramBuffer_t, data_b)
+                    == sizeoffield(eap_quadPageProgramBuffer_t, data_u64)
               , "Invalid data modelling"
               );
 

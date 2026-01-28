@@ -27,6 +27,8 @@
  * Local functions
  *   disableAllFlashBlocks
  *   enableFlashBlocks
+ *   isQuadPageBlank
+ *   verifyQuadPage
  */
 
 /*
@@ -132,6 +134,10 @@ static const flashBlockDesc_t RODATA(flashBlockDescAry)[] =
 # error Specify flash block configuration for MPC5777C
 #endif
 };
+
+/** Temporary storage of the quad-page buffer, which is currently being programmed. The
+    buffer is stored at the start of progamming for verification when program mode is left. */
+static const eap_quadPageProgramBuffer_t *BSS_OS(_pPrgDataBuf) = NULL;
 
 /*
  * Function implementation
@@ -265,6 +271,90 @@ static void enableFlashBlocks(uint32_t addressFrom, uint32_t noBytes, bool isEra
 
 
 /**
+ * Check if a quad-page is blank.
+ */
+static inline bool isQuadPageBlank(uint32_t addrOfQuadPage)
+{
+    assert(EAP_GET_ADDR_OFFS_IN_QUAD_PAGE(addrOfQuadPage) == 0u);
+    _Static_assert( EAP_C55FMC_SIZE_OF_QUAD_PAGE / sizeof(uint64_t) == 16u
+                    &&  EAP_C55FMC_SIZE_OF_QUAD_PAGE % sizeof(uint64_t) == 0u
+                  , "Bad implementation of blank check"
+                  );
+    const volatile uint64_t *pRd = (const volatile uint64_t*)addrOfQuadPage;
+#if 0
+    const unsigned int noDWords = EAP_C55FMC_SIZE_OF_QUAD_PAGE/sizeof(uint64_t);
+    for(unsigned int idxDWd=0u; idxDWd<noDWords; ++idxDWd, ++pRd)
+        if(*pRd != 0xFFFFFFFFFFFFFFFFull)
+            return false;
+#else
+    if(*pRd++ != 0xFFFFFFFFFFFFFFFFull) return false;
+    if(*pRd++ != 0xFFFFFFFFFFFFFFFFull) return false;
+    if(*pRd++ != 0xFFFFFFFFFFFFFFFFull) return false;
+    if(*pRd++ != 0xFFFFFFFFFFFFFFFFull) return false;
+    if(*pRd++ != 0xFFFFFFFFFFFFFFFFull) return false;
+    if(*pRd++ != 0xFFFFFFFFFFFFFFFFull) return false;
+    if(*pRd++ != 0xFFFFFFFFFFFFFFFFull) return false;
+    if(*pRd++ != 0xFFFFFFFFFFFFFFFFull) return false;
+    if(*pRd++ != 0xFFFFFFFFFFFFFFFFull) return false;
+    if(*pRd++ != 0xFFFFFFFFFFFFFFFFull) return false;
+    if(*pRd++ != 0xFFFFFFFFFFFFFFFFull) return false;
+    if(*pRd++ != 0xFFFFFFFFFFFFFFFFull) return false;
+    if(*pRd++ != 0xFFFFFFFFFFFFFFFFull) return false;
+    if(*pRd++ != 0xFFFFFFFFFFFFFFFFull) return false;
+    if(*pRd++ != 0xFFFFFFFFFFFFFFFFull) return false;
+    if(*pRd++ != 0xFFFFFFFFFFFFFFFFull) return false;
+#endif
+
+    assert((uint32_t)pRd == addrOfQuadPage + EAP_C55FMC_SIZE_OF_QUAD_PAGE);
+    return true;
+    
+} /* isQuadPageBlank */
+
+
+/**
+ * Check if the falsh ROM contents of a quad-page are identical to some expected data.
+ *   @return
+ * Get \a true if the flash ROM contains the data in \a pPrgDataBuf->data_b. Get \a
+ * false in case of any deviation.
+ *   @param[in] pPrgDataBuf
+ * A data buffer by reference, which conatins the expected contents of a quad-page.
+ */
+static bool verifyQuadPage(const eap_quadPageProgramBuffer_t * const pPrgDataBuf)
+{
+    assert( pPrgDataBuf != NULL 
+            &&  EAP_GET_ADDR_OFFS_IN_QUAD_PAGE(pPrgDataBuf->address) == 0u
+          );
+    _Static_assert( EAP_C55FMC_SIZE_OF_QUAD_PAGE / sizeof(uint64_t) == 16u
+                    &&  EAP_C55FMC_SIZE_OF_QUAD_PAGE % sizeof(uint64_t) == 0u
+                  , "Bad implementation of verify"
+                  );
+    const volatile uint64_t *pFlash = (const volatile uint64_t*)pPrgDataBuf->address;
+    const uint64_t *pExptd = &pPrgDataBuf->data_u64[0];
+     
+    if(*pFlash++ != *pExptd++) return false;
+    if(*pFlash++ != *pExptd++) return false;
+    if(*pFlash++ != *pExptd++) return false;
+    if(*pFlash++ != *pExptd++) return false;
+    if(*pFlash++ != *pExptd++) return false;
+    if(*pFlash++ != *pExptd++) return false;
+    if(*pFlash++ != *pExptd++) return false;
+    if(*pFlash++ != *pExptd++) return false;
+    if(*pFlash++ != *pExptd++) return false;
+    if(*pFlash++ != *pExptd++) return false;
+    if(*pFlash++ != *pExptd++) return false;
+    if(*pFlash++ != *pExptd++) return false;
+    if(*pFlash++ != *pExptd++) return false;
+    if(*pFlash++ != *pExptd++) return false;
+    if(*pFlash++ != *pExptd++) return false;
+    if(*pFlash++ != *pExptd++) return false;
+
+    assert((uint32_t)pFlash == (uint32_t)pPrgDataBuf->address + EAP_C55FMC_SIZE_OF_QUAD_PAGE);
+    return true;
+
+} /* verifyQuadPage */
+
+
+/**
  * Initialize the flash ROM driver.
  */
 void eap_osInitFlashRomDriver(void)
@@ -374,10 +464,6 @@ rom_errorCode_t eap_osStartEraseFlashBlocks(uint32_t addressFrom, uint32_t noByt
         /* Set MCR[ERS] to start erase operation. */
         C55FMC->MCR |= C55FMC_MCR_ERS_MASK;
 
-// TODO Generalize
-//        assert(addressFrom >= 0xFC0000u  &&  addressFrom+noBytes <= 0xFC8000u);
-//        C55FMC->LOCK0 &= ~C55FMC_LOCK0_LOWLOCK(4u); /* Bit 2: 0xFC0000..0xFC8000. */
-//        C55FMC->SEL0 = C55FMC_LOCK0_LOWLOCK(4u); /* Bit 2: 0xFC0000..0xFC8000. */
         enableFlashBlocks(addressFrom, noBytes, /*isErase*/ true);
 
         /* The interlock write needs to be done prior to enabling the high voltage. We
@@ -395,12 +481,9 @@ rom_errorCode_t eap_osStartEraseFlashBlocks(uint32_t addressFrom, uint32_t noByt
     }
     else
     {
-        /* Turn off high voltage and reset all operation request bits. */
+        /* Turn off high voltage, reset all operation request bits and lock flash blocks. */
         eap_abortEraseAndProgram();
 
-// TODO Generalize and centralize
-//        C55FMC->LOCK0 |= C55FMC_LOCK0_LOWLOCK(4u); /* Bit 2: 0xFC0000..0xFC8000. */
-//        C55FMC->SEL0 &= ~C55FMC_LOCK0_LOWLOCK(4u); /* Bit 2: 0xFC0000..0xFC8000. */
         retCode = rom_err_unexpectedHwState;
     }
 
@@ -452,12 +535,8 @@ rom_errorCode_t eap_osGetStatusEraseFlashBlocks(void)
 
     if(retCode != rom_err_processPending)
     {
-        /* Turn off high voltage and reset all operation request bits. */
+        /* Turn off high voltage, reset all operation request bits and lock flash blocks. */
         eap_abortEraseAndProgram();
-
-// TODO Generalize and centralize
-//        C55FMC->LOCK0 |= C55FMC_LOCK0_LOWLOCK(4u); /* Bit 2: 0xFC0000..0xFC8000. */
-//        C55FMC->SEL0 &= ~C55FMC_LOCK0_LOWLOCK(4u); /* Bit 2: 0xFC0000..0xFC8000. */
     }
 
     return retCode;
@@ -472,11 +551,16 @@ rom_errorCode_t eap_osGetStatusEraseFlashBlocks(void)
  * makes the flash programming begin. The function is non-blocking and doesn't wait for the
  * termination of the program step. Use eap_osGetStatusProgramQuadPage() to find out, when
  * it has terminated.
- *  @return
+ *   @return
  * Get the status: If everything succeeded, then it is pending (#rom_err_processPending),
  * otherwise an error message.
- *  @param[in] pPrgDataBuf
- * The buffer with the data to program and the target address in flash ROM.
+ *   @param[in] pPrgDataBuf
+ * The buffer with the data to program and the target address in flash ROM.\n
+ *   Caution: The buffer needs to be unmodified and available to the flash ROM driver until
+ * programming of the quad-page has completed - either until
+ * eap_osGetStatusProgramQuadPage() has reported the end of the operation (no matter
+ * whether successful) or until the programming mode has been aborted using
+ * eap_abortEraseAndProgram().
  */
 rom_errorCode_t eap_osStartProgramQuadPage(eap_quadPageProgramBuffer_t * const pPrgDataBuf)
 {
@@ -500,45 +584,51 @@ rom_errorCode_t eap_osStartProgramQuadPage(eap_quadPageProgramBuffer_t * const p
     else if((mcr & BITS_TO_BE_CLEARED) == 0u)
     #undef BITS_TO_BE_CLEARED
     {
-        /* Enable the flash block for programming, which the wanted quad-page sits in. */
-// TODO Generalize
-//        assert(pPrgDataBuf->address >= 0xFC0000u  &&  pPrgDataBuf->address+128u <= 0xFC8000u);
-//        C55FMC->LOCK0 &= ~C55FMC_LOCK0_LOWLOCK(4u); /* Bit 2: 0xFC0000..0xFC8000. */
-        enableFlashBlocks( pPrgDataBuf->address
-                         , EAP_C55FMC_SIZE_OF_QUAD_PAGE
-                         , /*isErase*/ false
-                         );
-        
-        /* Set MCR[PGM] to start program operation. */
-        C55FMC->MCR |= C55FMC_MCR_PGM_MASK;
+// TODO Blank test fails although programming will yield correct result and debugger shows
+// erased memory after entering a new session. Do we have a cache inconsistency issue here?
+        //if(!isQuadPageBlank(pPrgDataBuf->address))
+        //    retCode = rom_err_quadPageNotBlank;      
+        //else
+        {
+            /* Enable the flash block for programming, which the wanted quad-page sits in. */
+            enableFlashBlocks( pPrgDataBuf->address
+                             , EAP_C55FMC_SIZE_OF_QUAD_PAGE
+                             , /*isErase*/ false
+                             );
 
-        /* We always write an entire quad-page at once. */
+            /* Set MCR[PGM] to start program operation. */
+            C55FMC->MCR |= C55FMC_MCR_PGM_MASK;
 
-        /* Copy quad-page contents into the controller's data buffer. This is at the
-           same time the required interlock write. */
-        const uint32_t *pRd = &pPrgDataBuf->data_u32[0];
-        volatile uint32_t *pWr = (volatile uint32_t*)pPrgDataBuf->address;
+            /* We always write an entire quad-page at once. */
 
-        _Static_assert(EAP_C55FMC_SIZE_OF_QUAD_PAGE % 4u == 0u, "Bad configuration");
-        for(unsigned int u=0u; u<EAP_C55FMC_SIZE_OF_QUAD_PAGE/4u; ++u)
-            * pWr++ = * pRd++;
+            /* Copy quad-page contents into the controller's data buffer. This is at the
+               same time the required interlock write. */
+            const uint32_t *pRd = &pPrgDataBuf->data_u32[0];
+            volatile uint32_t *pWr = (volatile uint32_t*)pPrgDataBuf->address;
 
-        /* After filling the write buffer, we set MCR[EHV] to turn on the high voltage
-           for flashing. See RM48, 74.5.1, p.3656. */
-        C55FMC->MCR |= C55FMC_MCR_EHV_MASK;
+            _Static_assert(EAP_C55FMC_SIZE_OF_QUAD_PAGE % 4u == 0u, "Bad configuration");
+            for(unsigned int u=0u; u<EAP_C55FMC_SIZE_OF_QUAD_PAGE/4u; ++u)
+                * pWr++ = * pRd++;
 
-        /* This is a non-blocking function. We don't wait for the result but will check
-           it in the next clock tick. */
-        retCode = rom_err_processPending;
+            /* After filling the write buffer, we set MCR[EHV] to turn on the high voltage
+               for flashing. See RM48, 74.5.1, p.3656. */
+            C55FMC->MCR |= C55FMC_MCR_EHV_MASK;
+
+            /* Save the reference to the input data buffer; we still need it at the end for a
+               verify. */
+            _pPrgDataBuf = pPrgDataBuf;
+
+            /* This is a non-blocking function. We don't wait for the result but will check
+               it in the next clock tick. */
+            retCode = rom_err_processPending;
+
+        } /* if(Quad-page is erased?) */
     }
     else
     {
-        /* Turn off high voltage and reset all operation request bits. */
+        /* Turn off high voltage, reset all operation request bits and lock flash blocks. */
         eap_abortEraseAndProgram();
 
-// TODO Generalize and centralize
-//        C55FMC->LOCK0 |= C55FMC_LOCK0_LOWLOCK(4u); /* Bit 2: 0xFC0000..0xFC8000. */
-//        C55FMC->SEL0 &= ~C55FMC_LOCK0_LOWLOCK(4u); /* Bit 2: 0xFC0000..0xFC8000. */
         retCode = rom_err_unexpectedHwState;
     }
 
@@ -589,13 +679,16 @@ rom_errorCode_t eap_osGetStatusProgramQuadPage(void)
 
     if(retCode != rom_err_processPending)
     {
-        /* Turn off high voltage and reset all operation request bits. */
+        /* Turn off high voltage, reset all operation request bits and lock flash blocks. */
         eap_abortEraseAndProgram();
-
-// TODO Generalize and centralize
-//        C55FMC->LOCK0 |= C55FMC_LOCK0_LOWLOCK(4u); /* Bit 2: 0xFC0000..0xFC8000. */
-//        C55FMC->SEL0 &= ~C55FMC_LOCK0_LOWLOCK(4u); /* Bit 2: 0xFC0000..0xFC8000. */
+        
+        /* After terminating high voltage and programming mode, the data from the partition
+           is again readable and we can verify the programming result. */
+        if(retCode == rom_err_noError  && !verifyQuadPage(_pPrgDataBuf))
+            retCode = rom_err_verifyFailed;
     }
+
+
 
     return retCode;
 
@@ -617,7 +710,7 @@ void eap_abortEraseAndProgram(void)
     C55FMC->MCR &= ~C55FMC_MCR_PGM_MASK;
     C55FMC->MCR &= ~C55FMC_MCR_ERS_MASK;
 
-    /* Now we can restore the default settings for accesibility the of flash blocks. */
+    /* Now we can restore the default settings for accesibility of the flash blocks. */
     disableAllFlashBlocks();
 
 } /* eap_abortEraseAndProgram */
