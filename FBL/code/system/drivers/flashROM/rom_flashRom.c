@@ -278,6 +278,9 @@ void rom_flashRomMain(void)
     }
     if(_pPrgBuf != NULL)
     {
+#if 0 /* This path: Emulate a programming, which is slower than data transmission and which
+         slows down the CCP communication. */
+
         if(cntDelay_ > 0u)
         {
             -- cntDelay_;
@@ -315,5 +318,13 @@ void rom_flashRomMain(void)
             dib_releaseBuffer(_pPrgBuf, /*submitForProgramming*/ false);
             _pPrgBuf = NULL;
         }
+        
+#else /* This path: Emulate programming in realistic speed. Measurements show a programming
+         time of 0.3ms per quad-page: We will be ready already in the next 1ms-clock-tick.
+         CCP communication limits the speed, not programming. */
+
+        dib_releaseBuffer(_pPrgBuf, /*submitForProgramming*/ false);
+        _pPrgBuf = NULL;
+#endif
     }
 } /* rom_flashRomMain */

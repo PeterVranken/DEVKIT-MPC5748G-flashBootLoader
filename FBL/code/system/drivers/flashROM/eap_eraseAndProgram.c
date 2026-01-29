@@ -768,6 +768,8 @@ void eap_abortEraseAndProgram(void)
 
 /***************************** Test, temporary code ******************/
 
+#include "stm_systemTimer.h"
+
 eap_quadPageProgramBuffer_t BSS_OS(eap_prgDataBuf) =
 {
     .address = 0u,
@@ -783,6 +785,8 @@ rom_errorCode_t eap_resultStartErase = rom_err_invalidErrorCode
               , eap_resultGetStatusErase = rom_err_invalidErrorCode
               , eap_resultStartPgm = rom_err_invalidErrorCode
               , eap_resultGetStatusPgm = rom_err_invalidErrorCode;
+uint32_t eap_tiPgmQuadPageIn12p5ns = UINT32_MAX;
+
 /** Return true if state machine requires continued calling for completing the process. */
 bool eap_firstTest(bool start)
 {
@@ -828,6 +832,7 @@ bool eap_firstTest(bool start)
     }
     else if(state_ == program)
     {
+        eap_tiPgmQuadPageIn12p5ns = stm_osGetSystemTime(/*idxTimer*/ 0u);
         eap_resultStartPgm = eap_osStartProgramQuadPage(&eap_prgDataBuf);
 
         if(eap_resultStartPgm == rom_err_processPending)
@@ -848,9 +853,15 @@ bool eap_firstTest(bool start)
                     break;
                 }
             }
+            eap_tiPgmQuadPageIn12p5ns = stm_osGetSystemTime(/*idxTimer*/ 0u)
+                                        - eap_tiPgmQuadPageIn12p5ns;
         }
         else
+        {
             state_ = error;
+            eap_tiPgmQuadPageIn12p5ns = stm_osGetSystemTime(/*idxTimer*/ 0u)
+                                        - eap_tiPgmQuadPageIn12p5ns;
+        }
     }
     
     return state_ != error  &&  state_ != success;
