@@ -27,6 +27,7 @@
  * Local functions
  *   disableAllFlashBlocks
  *   enableFlashBlocks
+ *   invalidateDCache
  *   isQuadPageBlank
  *   verifyQuadPage
  */
@@ -268,6 +269,45 @@ static void enableFlashBlocks(uint32_t addressFrom, uint32_t noBytes, bool isEra
     } /* for(All configured flash blocks.) */
 
 } /* enableFlashBlocks */
+
+
+/**
+ * Invalidate the D-cache for all addresses, which belong to a given quad-page.\n
+ *   D-ache invalidation is required, whenever the contents of the background memory change
+ * for reasons not being loads and stores by the CPU, e.g., erasure of programming of the
+ * flash array.
+ *   @param[in] addrOfQuadPage
+ * The address of the quad-page.
+ */
+static inline void invalidateDCache(uint32_t addrOfQuadPage)
+{
+    /* Address doesn't need to be forced to have the alignment of a cache line; quad-page
+       have the even higher alignment constraint. We jsut check by assertion. */
+    assert(EAP_GET_ADDR_OFFS_IN_QUAD_PAGE(addrOfQuadPage) == 0u);
+    
+#if defined(MCU_MPC5748G)
+    /* The e200z4204n3 core's line size, see RM48 62.7.1, p.3111. */
+    const uint32_t sizeofCacheLine = 32u;
+#elif defined(MCU_MPC5775B) || defined(MCU_MPC5775E)
+# error Specify cache line size for MPC5775B/E
+#elif defined(MCU_MPC5777C)
+# error Specify cache line size for MPC5777C
+#endif
+
+    /* Flush data fetch operations. */
+    __asm__ volatile ("msync");
+    
+    /* A quad-page of 128 Byte means four possible tag hits in the cache. */
+    __asm__ volatile ("dcbi 0,%0" :: "r"(addrOfQuadPage + 0u*sizeofCacheLine));
+    __asm__ volatile ("dcbi 0,%0" :: "r"(addrOfQuadPage + 1u*sizeofCacheLine));
+    __asm__ volatile ("dcbi 0,%0" :: "r"(addrOfQuadPage + 2u*sizeofCacheLine));
+    __asm__ volatile ("dcbi 0,%0" :: "r"(addrOfQuadPage + 3u*sizeofCacheLine));
+    
+    /* Force re-fill of all pipelines after cache manipulation. */
+    __asm__ volatile ("msync");
+    __asm__ volatile ("isync");
+
+} /* invalidateDCache */
 
 
 /**
@@ -583,12 +623,16 @@ rom_errorCode_t eap_osStartProgramQuadPage(eap_quadPageProgramBuffer_t * const p
                                 )
     else if((mcr & BITS_TO_BE_CLEARED) == 0u)
     #undef BITS_TO_BE_CLEARED
-    {
-// TODO Blank test fails although programming will yield correct result and debugger shows
-// erased memory after entering a new session. Do we have a cache inconsistency issue here?
-        //if(!isQuadPageBlank(pPrgDataBuf->address))
-        //    retCode = rom_err_quadPageNotBlank;      
-        //else
+    { 
+        /* Erasure of the flash array has not been done in sync with the D-cache contents.
+           Reading of the flash will not surely return the values, which are now physically
+           in the flash array. Before we can do a reliable blanks test, we need to
+           invalidate all data, which is cached for the addreses of the quad-page. */
+        invalidateDCache(pPrgDataBuf->address);
+        
+        if(!isQuadPageBlank(pPrgDataBuf->address))
+            retCode = rom_err_quadPageNotBlank;      
+        else
         {
             /* Enable the flash block for programming, which the wanted quad-page sits in. */
             enableFlashBlocks( pPrgDataBuf->address
@@ -681,6 +725,12 @@ rom_errorCode_t eap_osGetStatusProgramQuadPage(void)
     {
         /* Turn off high voltage, reset all operation request bits and lock flash blocks. */
         eap_abortEraseAndProgram();
+        
+        /* Before we continue with the verify, we invalidate all quad-page addresses in the
+           D-cache - without we would likely not read the bytes physcally programmed in the
+           flash array but the still cached data from the interlock writes, and verify
+           would then always succeed. */
+        invalidateDCache(_pPrgDataBuf->address);
         
         /* After terminating high voltage and programming mode, the data from the partition
            is again readable and we can verify the programming result. */
