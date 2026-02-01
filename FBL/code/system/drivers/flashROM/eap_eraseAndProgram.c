@@ -45,6 +45,7 @@
 #include <assert.h>
 
 #include "rom_flashRom.h"
+#include "rtos_ivorHandler.h"
 
 /* Include the appropriate MCU header. */
 #if defined(MCU_MPC5748G)
@@ -69,24 +70,24 @@
  */
 
 /** The description of a flash block. */
-typedef struct 
+typedef struct
 {
     /** Address of first byte of flash block. */
     uint32_t addrFrom;
-    
+
     /** Address of first byte (exclusive) of flash block. */
     uint32_t addrTo;
-    
+
     /** The index of the RWW partition. */
     uint8_t idxPartition;
-    
+
     /** The index of the lock or select register, which controls the block. */
     uint8_t idxLockReg;
-    
+
     /** A bit mask with a single bit set. The bit masks the control bit for the given flash
         block in the related lock or select register \a idxLockReg. */
     uint32_t bitMaskLockReg;
-    
+
 } flashBlockDesc_t;
 
 /*
@@ -200,7 +201,7 @@ static void disableAllFlashBlocks(void)
 static void enableFlashBlocks(uint32_t addressFrom, uint32_t noBytes, bool isErase)
 {
     const uint32_t addressTo = addressFrom + noBytes;
-    
+
     /* We address to the lock and select registers as an array. */
     _Static_assert
         ( (uintptr_t)&C55FMC->LOCK1 == (uintptr_t)&C55FMC->LOCK0 + 1*sizeof(C55FMC->LOCK0)
@@ -214,7 +215,7 @@ static void enableFlashBlocks(uint32_t addressFrom, uint32_t noBytes, bool isEra
 
     /* We always program single quad-pages. */
     assert(isErase ||  noBytes == EAP_C55FMC_SIZE_OF_QUAD_PAGE);
-    
+
     /* If we see an overflow then we definitly have an invalid address space. (ROM at the
        very end of the address space is not supported by the implementation.) A valid adress
        ranges is a prerequiste of calling this function. */
@@ -231,7 +232,7 @@ static void enableFlashBlocks(uint32_t addressFrom, uint32_t noBytes, bool isEra
     {
         if(idxBlk_ >= sizeOfAry(flashBlockDescAry))
             idxBlk_ = 0u;
-            
+
         const flashBlockDesc_t * const pBlkDesc = &flashBlockDescAry[idxBlk_];
         if(pBlkDesc->addrFrom < addressTo  &&  pBlkDesc->addrTo > addressFrom)
         {
@@ -239,7 +240,7 @@ static void enableFlashBlocks(uint32_t addressFrom, uint32_t noBytes, bool isEra
             volatile uint32_t * const lockRegAry = &C55FMC->LOCK0;
             assert((lockRegAry[pBlkDesc->idxLockReg] & pBlkDesc->bitMaskLockReg) != 0u);
             lockRegAry[pBlkDesc->idxLockReg] &= ~pBlkDesc->bitMaskLockReg;
-            
+
             /* Erased blocks need to be explicitly selected. */
             if(isErase)
             {
@@ -271,11 +272,95 @@ static void enableFlashBlocks(uint32_t addressFrom, uint32_t noBytes, bool isEra
 } /* enableFlashBlocks */
 
 
+///* Read/Write SPR helpers */
+//static inline uint32_t mfspr(uint32_t spr)
+//{
+//    uint32_t val;
+//    __asm__ volatile ("mfspr %0,%1" : "=r"(val) : "i"(spr));
+//    return val;
+//}
+//
+//static inline void mtspr(uint32_t spr, uint32_t val)
+//{
+//    __asm__ volatile ("mtspr %0,%1" :: "i"(spr), "r"(val));
+//}
+//
+///**
+// * Invalidate the entire D-cache; all tags/cache lines are invalidated.\n
+// *   D-cache invalidation is required, whenever the contents of the background memory
+// * change for reasons not being loads and stores by the CPU, e.g., erasure or programming
+// * of the flash array.
+// */
+//// TODO Onve this function is validated, we should better use it once after erasure than
+//// using invalidateDCache prior to each quad-page blank-check.
+//static inline void invalidateDCacheFull(void)
+//{
+//    // TODO This function is not tested yet. Compare with proven assembly code in startup.S
+//    // and rtos_ivorHandler.S. A difference is the handling of the abort flag. Is the use
+//    // of instruction and data load/store synchronization instructions identical?
+//
+//    #define SPR_L1CSR0   1010u      /* Register SPR1010 is L1 cache control an status. */
+//    #define L1CSR0_DCE   (1u << 0)  /* Register bit L1CSR0[DCE], Data Cache Enable. */
+//    #define L1CSR0_CINV  (1u << 1)  /* Register bit L1CSR0[CINV], Data Cache Invalidate. */
+//
+//    /* Flush data fetch and store operations. Down here and until completion of the cache
+//       invalidation, we should better not use the RAM. */
+//    // TODO Check if RAM is usable during invalidation. Otherwise we would at least need to
+//    // suspend IRQ handling. And using assembly code would in this case be the only
+//    // guarantee.
+//#if 0
+//Some first information seems to prove the doubts on using RAM:
+//
+//Where this is stated in the manuals (and how to find it)
+//
+//
+//e200z4 Core Reference Manual (e200z4RM)
+//The behavior is described in the cache section that documents the L1 Cache Control and Status Register (L1CSR0) and cache maintenance operations (chapter "L1 Cache Control and Status Registers (L1CSR0, L1CSR1)" and the cache invalidation subsection). The manual explains that CINV is self-clearing and that the cache is busy during invalidation. You can find these registers in section 2.4.14 of the e200z4RM PDF; search that PDF for "L1CSR0" and "CINV". [usermanual.wiki]
+//
+//
+//Exact wording (as quoted by NXP support from the core RM):
+//
+//"During the process of performing the invalidation, a cache does not respond to accesses that are not snoop accesses and remains busy. Interrupts may still be recognized and processed, potentially aborting the invalidation operation."
+//Additionally, the same reply notes:
+//"Once set, hardware clears L1CSR0[CINV] after ~134 CPU cycles. During this time, CPU waits for cache invalidation to complete. Code is not executed. Software should poll L1CSR0[CINV] until it is cleared."
+//(NXP staff quoting the core RM in an official forum answer.) [community.nxp.com], [community.nxp.com]
+//
+//
+//Closely related e200 manuals (e200z6 RM) describe the same mechanism and the need to treat the cache as busy / non-responsive to normal accesses during the invalidate/maintenance window; see the L1 Cache Control and Status Register (L1CSR0) and Cache Invalidation sections. Although this is the z6 variant, the invalidate semantics match what NXP states for z4/z7. [yumpu.com], [yumpu.com]
+//
+//This means effectively that it is not reliably possible to implent this in C. The keyword register is a recommendation only but no guarantee that no RAM is used. We can write a C function frame wrapper around the code existing in the RTOS, rtos_ivorHandler.S.
+//#endif
+//
+//    __asm__ volatile ("msync");
+//
+//    /* Request global invalidate by setting L1CSR0[CINV]. */
+//    register uint32_t l1csr0 = mfspr(SPR_L1CSR0);
+//    l1csr0 |= L1CSR0_CINV;
+//    mtspr(SPR_L1CSR0, l1csr0);
+//
+//    /* Invalidate instruction pipeline, force re-reading the instructions. */
+//    __asm__ volatile ("isync");
+//
+//    /* Wait for cache invalidate to complete. (Bit L1CSR0[CINV] clears when done.) */
+//    do
+//    {
+//        l1csr0 = mfspr(SPR_L1CSR0);
+//    }
+//    while((l1csr0 & L1CSR0_CINV) != 0u);
+//
+//    __asm__ volatile ("isync");
+//
+//    #undef SPR_L1CSR0
+//    #undef L1CSR0_DCE
+//    #undef L1CSR0_CINV
+//} /* invalidateDCacheFull */
+
+
 /**
  * Invalidate the D-cache for all addresses, which belong to a given quad-page.\n
- *   D-ache invalidation is required, whenever the contents of the background memory change
- * for reasons not being loads and stores by the CPU, e.g., erasure of programming of the
- * flash array.
+ *   D-cache invalidation is required, whenever the contents of the background memory
+ * change for reasons not being loads and stores by the CPU, e.g., erasure or programming
+ * of the flash array.
  *   @param[in] addrOfQuadPage
  * The address of the quad-page.
  */
@@ -284,7 +369,7 @@ static inline void invalidateDCache(uint32_t addrOfQuadPage)
     /* Address doesn't need to be forced to have the alignment of a cache line; quad-page
        have the even higher alignment constraint. We jsut check by assertion. */
     assert(EAP_GET_ADDR_OFFS_IN_QUAD_PAGE(addrOfQuadPage) == 0u);
-    
+
 #if defined(MCU_MPC5748G)
     /* The e200z4204n3 core's line size, see RM48 62.7.1, p.3111. */
     const uint32_t sizeofCacheLine = 32u;
@@ -294,18 +379,22 @@ static inline void invalidateDCache(uint32_t addrOfQuadPage)
 # error Specify cache line size for MPC5777C
 #endif
 
-    /* Flush data fetch operations. */
+    uint32_t msr = rtos_osEnterCriticalSection();
+
+    /* Flush data fetch and store operations. */
     __asm__ volatile ("msync");
-    
+
     /* A quad-page of 128 Byte means four possible tag hits in the cache. */
     __asm__ volatile ("dcbi 0,%0" :: "r"(addrOfQuadPage + 0u*sizeofCacheLine));
     __asm__ volatile ("dcbi 0,%0" :: "r"(addrOfQuadPage + 1u*sizeofCacheLine));
     __asm__ volatile ("dcbi 0,%0" :: "r"(addrOfQuadPage + 2u*sizeofCacheLine));
     __asm__ volatile ("dcbi 0,%0" :: "r"(addrOfQuadPage + 3u*sizeofCacheLine));
-    
+
     /* Force re-fill of all pipelines after cache manipulation. */
     __asm__ volatile ("msync");
     __asm__ volatile ("isync");
+
+    rtos_osLeaveCriticalSection(msr);
 
 } /* invalidateDCache */
 
@@ -347,7 +436,7 @@ static inline bool isQuadPageBlank(uint32_t addrOfQuadPage)
 
     assert((uint32_t)pRd == addrOfQuadPage + EAP_C55FMC_SIZE_OF_QUAD_PAGE);
     return true;
-    
+
 } /* isQuadPageBlank */
 
 
@@ -361,7 +450,7 @@ static inline bool isQuadPageBlank(uint32_t addrOfQuadPage)
  */
 static bool verifyQuadPage(const eap_quadPageProgramBuffer_t * const pPrgDataBuf)
 {
-    assert( pPrgDataBuf != NULL 
+    assert( pPrgDataBuf != NULL
             &&  EAP_GET_ADDR_OFFS_IN_QUAD_PAGE(pPrgDataBuf->address) == 0u
           );
     _Static_assert( EAP_C55FMC_SIZE_OF_QUAD_PAGE / sizeof(uint64_t) == 16u
@@ -370,7 +459,7 @@ static bool verifyQuadPage(const eap_quadPageProgramBuffer_t * const pPrgDataBuf
                   );
     const volatile uint64_t *pFlash = (const volatile uint64_t*)pPrgDataBuf->address;
     const uint64_t *pExptd = &pPrgDataBuf->data_u64[0];
-     
+
     if(*pFlash++ != *pExptd++) return false;
     if(*pFlash++ != *pExptd++) return false;
     if(*pFlash++ != *pExptd++) return false;
@@ -405,7 +494,7 @@ void eap_osInitFlashRomDriver(void)
     for(unsigned int idxBlk=0u; idxBlk<sizeOfAry(flashBlockDescAry); ++idxBlk)
     {
         const flashBlockDesc_t * const pBlkDesc = &flashBlockDescAry[idxBlk];
-        
+
         /* The flash driver generally doesn't consider overflow in address calculations and
            it uses end addresses exclusively. This make the code fail for architectures,
            which have a flash ROM block at the very end of the implementation range of
@@ -414,18 +503,18 @@ void eap_osInitFlashRomDriver(void)
            your architecture by accident has such a flash block then the easiest way out
            would be sacrificing the last page of that block.) */
         assert(pBlkDesc->addrTo > 0u);
-        
+
         /* A flash block must not be empty. */
         assert(pBlkDesc->addrFrom < pBlkDesc->addrTo);
-        
+
         /* A flash-block must begin and end on a quad-page boundary. */
         assert(EAP_GET_ADDR_OFFS_IN_QUAD_PAGE(pBlkDesc->addrFrom) == 0u
                &&  EAP_GET_ADDR_OFFS_IN_QUAD_PAGE(pBlkDesc->addrTo) == 0u
               );
-              
+
         /* We have 4 lock and select registers. */
         assert(pBlkDesc->idxLockReg < 4u);
-        
+
         /* Each flash block is represented by excately one bit in these registers. */
         #define HAS_ONE_BIT_SET(x)  ((x)!=0u && ((x)&((x)-1u))==0u)
         assert(HAS_ONE_BIT_SET(pBlkDesc->bitMaskLockReg));
@@ -437,10 +526,10 @@ void eap_osInitFlashRomDriver(void)
            are not considered. */
         assert(idxBlk == 0u  ||  pBlkDesc->addrFrom == flashBlockDescAry[idxBlk-1].addrTo);
 # endif
-        
+
 
     } /* for(Check flash block specification table entries for plausibility) */
-    
+
 # if defined(MCU_MPC5748G)
     /* For the MPC5748G, the implementation of the address range validity uses hard-coded
        address boundaries. We need to check consistency. */
@@ -487,7 +576,7 @@ rom_errorCode_t eap_osStartEraseFlashBlocks(uint32_t addressFrom, uint32_t noByt
 
     if(!rom_isValidFlashAddressRange(addressFrom, noBytes))
     {
-        retCode = rom_err_badAddressRange;      
+        retCode = rom_err_badAddressRange;
     }
 
     /* To initiate erasure, no other operation must be in progress. */
@@ -577,10 +666,17 @@ rom_errorCode_t eap_osGetStatusEraseFlashBlocks(void)
     {
         /* Turn off high voltage, reset all operation request bits and lock flash blocks. */
         eap_abortEraseAndProgram();
+
+        /* Regardless whether erasure succeeded or failed, flash ROM array contents may
+           have altered and we have the (very high) risk of a D-cache inconsistency. We
+           invalidate the entire cache. Note, the I-cache is no affected as we don't read
+           any instruction from the erased flash blocks, whereas we will read the data for
+           a blank check. */
+        rtos_osInitializeDCache();
     }
 
     return retCode;
-    
+
 } /* eap_osGetStatusEraseFlashBlocks */
 
 
@@ -606,14 +702,14 @@ rom_errorCode_t eap_osStartProgramQuadPage(eap_quadPageProgramBuffer_t * const p
 {
     rom_errorCode_t retCode;
     const uint32_t mcr = C55FMC->MCR;
-    
+
     if( EAP_GET_ADDR_OFFS_IN_QUAD_PAGE(pPrgDataBuf->address) != 0u
         || !rom_isValidFlashAddressRange(pPrgDataBuf->address, EAP_C55FMC_SIZE_OF_QUAD_PAGE)
       )
     {
-        retCode = rom_err_badAddressRange;      
+        retCode = rom_err_badAddressRange;
     }
-    
+
     /* To initiate programming, no other operation must be in progress. */
     #define BITS_TO_BE_CLEARED  (C55FMC_MCR_ERS_MASK     \
                                  |C55FMC_MCR_PGM_MASK    \
@@ -623,15 +719,15 @@ rom_errorCode_t eap_osStartProgramQuadPage(eap_quadPageProgramBuffer_t * const p
                                 )
     else if((mcr & BITS_TO_BE_CLEARED) == 0u)
     #undef BITS_TO_BE_CLEARED
-    { 
-        /* Erasure of the flash array has not been done in sync with the D-cache contents.
-           Reading of the flash will not surely return the values, which are now physically
-           in the flash array. Before we can do a reliable blanks test, we need to
-           invalidate all data, which is cached for the addreses of the quad-page. */
-        invalidateDCache(pPrgDataBuf->address);
-        
+    {
+//        /* Erasure of the flash array has not been done in sync with the D-cache contents.
+//           Reading of the flash will not surely return the values, which are now physically
+//           in the flash array. Before we can do a reliable blanks test, we need to
+//           invalidate all data, which is cached for the addreses of the quad-page. */
+//        invalidateDCache(pPrgDataBuf->address);
+
         if(!isQuadPageBlank(pPrgDataBuf->address))
-            retCode = rom_err_quadPageNotBlank;      
+            retCode = rom_err_quadPageNotBlank;
         else
         {
             /* Enable the flash block for programming, which the wanted quad-page sits in. */
@@ -725,20 +821,18 @@ rom_errorCode_t eap_osGetStatusProgramQuadPage(void)
     {
         /* Turn off high voltage, reset all operation request bits and lock flash blocks. */
         eap_abortEraseAndProgram();
-        
+
         /* Before we continue with the verify, we invalidate all quad-page addresses in the
            D-cache - without we would likely not read the bytes physcally programmed in the
            flash array but the still cached data from the interlock writes, and verify
            would then always succeed. */
         invalidateDCache(_pPrgDataBuf->address);
-        
+
         /* After terminating high voltage and programming mode, the data from the partition
            is again readable and we can verify the programming result. */
         if(retCode == rom_err_noError  && !verifyQuadPage(_pPrgDataBuf))
             retCode = rom_err_verifyFailed;
     }
-
-
 
     return retCode;
 
@@ -791,7 +885,7 @@ uint32_t eap_tiPgmQuadPageIn12p5ns = UINT32_MAX;
 bool eap_firstTest(bool start)
 {
     static enum {idle, init, error, waitForErase, program, success, } state_ SECTION(.sdata.OS.var) = idle;
-    
+
     if(start)
     {
         assert(state_ == idle  ||  state_ == success);
@@ -799,7 +893,7 @@ bool eap_firstTest(bool start)
     }
     else
         assert(state_ == waitForErase  ||  state_ == program);
-    
+
     if(state_ == init)
     {
         eap_cntFsm = 0u;
@@ -819,12 +913,12 @@ bool eap_firstTest(bool start)
         }
         else
             state_ = error;
-    }        
+    }
     else if(state_ == waitForErase)
     {
         ++ eap_noWaitCyclesErase;
         eap_resultGetStatusErase = eap_osGetStatusEraseFlashBlocks();
-        
+
         if(eap_resultGetStatusErase == rom_err_noError)
             state_ = program;
         else if(eap_resultGetStatusErase != rom_err_processPending)
@@ -863,6 +957,6 @@ bool eap_firstTest(bool start)
                                         - eap_tiPgmQuadPageIn12p5ns;
         }
     }
-    
+
     return state_ != error  &&  state_ != success;
 }

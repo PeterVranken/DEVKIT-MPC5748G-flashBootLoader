@@ -386,5 +386,25 @@ int32_t rtos_osRunUserTask(const struct rtos_taskDesc_t *pUserTaskConfig, uint32
     is counted in the process. */
 _Noreturn void rtos_terminateUserTask(int32_t taskReturnValue);
 
+/**
+ * This function disables the D-cache, invalidates all contents and re-enables it.
+ *   
+ */
+static inline void rtos_osInitializeDCache(void)
+{
+    /* The assembly code must be called only, when all IRQ handling is suspended. Otherwise
+       we couldn't guarantee that no RAM access, load or store, takes place during cache
+       invalidation. */
+    uint32_t msr = rtos_osEnterCriticalSection();
+    
+    /* Now call assembly code. */
+    extern void rtos_initializeDCache(void);
+    rtos_initializeDCache();
+    
+    /* Restore state of IRQ handling. */
+    rtos_osLeaveCriticalSection(msr);
+
+} /* rtos_osInitializeDCache */
+
 #endif  /* For C code compilation only */
 #endif  /* RTOS_IVORHANDLER_INCLUDED */
