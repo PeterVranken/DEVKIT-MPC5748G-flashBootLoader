@@ -80,7 +80,7 @@
  * completed.
  *   @return
  * The timers are running at #STM_TIMER_0_CLK, #STM_TIMER_1_CLK and #STM_TIMER_2_CLK Hz The
- * unit of one step of the counter value is the reciprocal, i.e. 12.5 ns for timer 0. The
+ * unit of one step of the counter value is the reciprocal, i.e., 12.5 ns for timer 0. The
  * units are accessible as #STM_TIMER_0_PERIOD_IN_NS, #STM_TIMER_1_PERIOD_IN_NS and
  * #STM_TIMER_2_PERIOD_IN_NS.\n
  *   The timers wrap at 2^32-1. This limits measurable time spans to 2^32 * 12.5ns = 53.6s
