@@ -56,26 +56,26 @@ typedef struct dib_pageProgramBuffer_t dib_pageProgramBuffer_t;
 unsigned int dib_getNoFreeInputBuffers(void);
 
 /* Get a buffer for writing input data. */
-dib_pageProgramBuffer_t *dib_acquireInputBuffer(void);
+dib_pageProgramBuffer_t *dib_osAcquireInputBuffer(void);
 
 /* Get the data contents of a buffer. */
 eap_quadPageProgramBuffer_t *dib_getBufferPayload(dib_pageProgramBuffer_t *pBuf);
 
 /* Check for an address if it points into a given buffer. */
-bool dib_isAddressInBuffer(dib_pageProgramBuffer_t *pBuf, uint32_t address);
+bool dib_osIsAddressInBuffer(dib_pageProgramBuffer_t *pBuf, uint32_t address);
 
 /* Write some bytes into a buffer (which are intended for later programming). */
-uint32_t dib_writeDataIntoBuffer( dib_pageProgramBuffer_t *pBuf
-                                , uint32_t address
-                                , uint32_t noBytes
-                                , const uint8_t dataAry[]
-                                );
+uint32_t dib_osWriteDataIntoBuffer( dib_pageProgramBuffer_t *pBuf
+                                  , uint32_t address
+                                  , uint32_t noBytes
+                                  , const uint8_t dataAry[]
+                                  );
 
 /* Get a buffer for programming data. */
-dib_pageProgramBuffer_t *dib_acquireProgramBuffer(void);
+dib_pageProgramBuffer_t *dib_osAcquireProgramBuffer(void);
 
 /* Submit a buffer for programming. */
-void dib_releaseBuffer(dib_pageProgramBuffer_t *pBuf, bool submitForProgramming);
+void dib_osReleaseBuffer(dib_pageProgramBuffer_t *pBuf, bool submitForProgramming);
 
 /*
  * Global inline functions

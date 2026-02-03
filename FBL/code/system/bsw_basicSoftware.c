@@ -42,20 +42,21 @@
 #include <string.h>
 #include <assert.h>
 
-#include "typ_types.h"
+#include "bsw_canInterface.h"
 #include "ccl_configureClocks.h"
-#include "xbs_crossbarSwitch.h"
-#include "siu_siuPortDriver.h"
+#include "ccp_taskCcp.h"
+#include "cdr_canDriverAPI.h"
 #include "dma_dmaDriver.h"
-#include "sio_serialIO.h"
-#include "rtos.h"
 #include "gsl_systemLoad.h"
 #include "lbd_ledAndButtonDriver.h"
+#include "rom_flashRomDriver.h"
+#include "rtos.h"
 #include "sio_serialIO.h"
+#include "sio_serialIO.h"
+#include "siu_siuPortDriver.h"
 #include "stm_systemTimer.h"
-#include "cdr_canDriverAPI.h"
-#include "bsw_canInterface.h"
-#include "ccp_taskCcp.h"
+#include "typ_types.h"
+#include "xbs_crossbarSwitch.h"
 
 /*
  * Defines
@@ -339,20 +340,24 @@ int /* _Noreturn */ main(int noArgs ATTRIB_DBG_ONLY, const char *argAry[] ATTRIB
         assert(false);
     }
 
-    /** Initialize the extended CAN driver service "queued sending". */
+    /* Initialize the extended CAN driver service "queued sending". */
     if(!cdr_osInitQueuedSending())
     {
         initOk = false;
         assert(false);
     }
 
-    /** Initialize the CCP protocol implementation. This step depends on the CAN driver CDR
+    /* Initialize the CCP protocol implementation. This step depends on the CAN driver CDR
         and must come after cdr_osInitCanDriver(). */
     if(!ccp_osInitCcpTask())
     {
         initOk = false;
         assert(false);
     }
+
+    /* Initialize the complete flash driver, including the sub-ordinated modules eap and
+       dib. */
+    rom_osInitFlashRomDriver();
 
 #if 0
     /* After HW initialization, we can start the other cores. Note, there's no guarantee in

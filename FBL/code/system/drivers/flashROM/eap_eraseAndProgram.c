@@ -44,7 +44,7 @@
 #include <stdio.h>
 #include <assert.h>
 
-#include "rom_flashRom.h"
+#include "rom_flashRomDriver.h"
 #include "rtos_ivorHandler.h"
 
 /* Include the appropriate MCU header. */
@@ -392,7 +392,7 @@ static inline void invalidateDCache(uint32_t addrOfQuadPage)
 
     /* Force re-fill of all pipelines after cache manipulation. */
     __asm__ volatile ("msync");
-    __asm__ volatile ("isync");
+    __asm__ volatile ("se_isync");
 
     rtos_osLeaveCriticalSection(msr);
 
@@ -861,102 +861,102 @@ void eap_abortEraseAndProgram(void)
 
 
 /***************************** Test, temporary code ******************/
-
-#include "stm_systemTimer.h"
-
-eap_quadPageProgramBuffer_t BSS_OS(eap_prgDataBuf) =
-{
-    .address = 0u,
-    .data_b =
-    {
-        [0 ... (EAP_C55FMC_SIZE_OF_QUAD_PAGE-1u)] = 0u,
-    },
-};
-unsigned int eap_noWaitCyclesErase = 0u
-           , eap_noWaitCyclesPgm = 0u
-           , eap_cntFsm = 0u;
-rom_errorCode_t eap_resultStartErase = rom_err_invalidErrorCode
-              , eap_resultGetStatusErase = rom_err_invalidErrorCode
-              , eap_resultStartPgm = rom_err_invalidErrorCode
-              , eap_resultGetStatusPgm = rom_err_invalidErrorCode;
-uint32_t eap_tiPgmQuadPageIn12p5ns = UINT32_MAX;
-
-/** Return true if state machine requires continued calling for completing the process. */
-bool eap_firstTest(bool start)
-{
-    static enum {idle, init, error, waitForErase, program, success, } state_ SECTION(.sdata.OS.var) = idle;
-
-    if(start)
-    {
-        assert(state_ == idle  ||  state_ == success);
-        state_ = init;
-    }
-    else
-        assert(state_ == waitForErase  ||  state_ == program);
-
-    if(state_ == init)
-    {
-        eap_cntFsm = 0u;
-        eap_prgDataBuf.address = 0xFC0100u;
-        static uint8_t SDATA_OS(startVal_) = 1u;
-        for(unsigned int u=0u; u<EAP_C55FMC_SIZE_OF_QUAD_PAGE; ++u)
-            eap_prgDataBuf.data_b[u] = (startVal_ + u) & 0xFFu;
-        ++ startVal_;
-
-        eap_resultStartErase = eap_osStartEraseFlashBlocks( eap_prgDataBuf.address
-                                                          , EAP_C55FMC_SIZE_OF_QUAD_PAGE
-                                                          );
-        if(eap_resultStartErase == rom_err_processPending)
-        {
-            eap_noWaitCyclesErase = 0u;
-            state_ = waitForErase;
-        }
-        else
-            state_ = error;
-    }
-    else if(state_ == waitForErase)
-    {
-        ++ eap_noWaitCyclesErase;
-        eap_resultGetStatusErase = eap_osGetStatusEraseFlashBlocks();
-
-        if(eap_resultGetStatusErase == rom_err_noError)
-            state_ = program;
-        else if(eap_resultGetStatusErase != rom_err_processPending)
-            state_ = error;
-    }
-    else if(state_ == program)
-    {
-        eap_tiPgmQuadPageIn12p5ns = stm_osGetSystemTime(/*idxTimer*/ 0u);
-        eap_resultStartPgm = eap_osStartProgramQuadPage(&eap_prgDataBuf);
-
-        if(eap_resultStartPgm == rom_err_processPending)
-        {
-            eap_noWaitCyclesPgm = 0u;
-            while(true)
-            {
-                eap_resultGetStatusPgm = eap_osGetStatusProgramQuadPage();
-                if(eap_resultGetStatusPgm == rom_err_processPending)
-                    ++ eap_noWaitCyclesPgm;
-                else
-                {
-                    if(eap_resultGetStatusPgm == rom_err_noError)
-                        state_ = success;
-                    else
-                        state_ = error;
-
-                    break;
-                }
-            }
-            eap_tiPgmQuadPageIn12p5ns = stm_osGetSystemTime(/*idxTimer*/ 0u)
-                                        - eap_tiPgmQuadPageIn12p5ns;
-        }
-        else
-        {
-            state_ = error;
-            eap_tiPgmQuadPageIn12p5ns = stm_osGetSystemTime(/*idxTimer*/ 0u)
-                                        - eap_tiPgmQuadPageIn12p5ns;
-        }
-    }
-
-    return state_ != error  &&  state_ != success;
-}
+//
+//#include "stm_systemTimer.h"
+//
+//eap_quadPageProgramBuffer_t BSS_OS(eap_prgDataBuf) =
+//{
+//    .address = 0u,
+//    .data_b =
+//    {
+//        [0 ... (EAP_C55FMC_SIZE_OF_QUAD_PAGE-1u)] = 0u,
+//    },
+//};
+//unsigned int eap_noWaitCyclesErase = 0u
+//           , eap_noWaitCyclesPgm = 0u
+//           , eap_cntFsm = 0u;
+//rom_errorCode_t eap_resultStartErase = rom_err_invalidErrorCode
+//              , eap_resultGetStatusErase = rom_err_invalidErrorCode
+//              , eap_resultStartPgm = rom_err_invalidErrorCode
+//              , eap_resultGetStatusPgm = rom_err_invalidErrorCode;
+//uint32_t eap_tiPgmQuadPageIn12p5ns = UINT32_MAX;
+//
+///** Return true if state machine requires continued calling for completing the process. */
+//bool eap_firstTest(bool start)
+//{
+//    static enum {idle, init, error, waitForErase, program, success, } state_ SECTION(.sdata.OS.var) = idle;
+//
+//    if(start)
+//    {
+//        assert(state_ == idle  ||  state_ == success);
+//        state_ = init;
+//    }
+//    else
+//        assert(state_ == waitForErase  ||  state_ == program);
+//
+//    if(state_ == init)
+//    {
+//        eap_cntFsm = 0u;
+//        eap_prgDataBuf.address = 0xFC0100u;
+//        static uint8_t SDATA_OS(startVal_) = 1u;
+//        for(unsigned int u=0u; u<EAP_C55FMC_SIZE_OF_QUAD_PAGE; ++u)
+//            eap_prgDataBuf.data_b[u] = (startVal_ + u) & 0xFFu;
+//        ++ startVal_;
+//
+//        eap_resultStartErase = eap_osStartEraseFlashBlocks( eap_prgDataBuf.address
+//                                                          , EAP_C55FMC_SIZE_OF_QUAD_PAGE
+//                                                          );
+//        if(eap_resultStartErase == rom_err_processPending)
+//        {
+//            eap_noWaitCyclesErase = 0u;
+//            state_ = waitForErase;
+//        }
+//        else
+//            state_ = error;
+//    }
+//    else if(state_ == waitForErase)
+//    {
+//        ++ eap_noWaitCyclesErase;
+//        eap_resultGetStatusErase = eap_osGetStatusEraseFlashBlocks();
+//
+//        if(eap_resultGetStatusErase == rom_err_noError)
+//            state_ = program;
+//        else if(eap_resultGetStatusErase != rom_err_processPending)
+//            state_ = error;
+//    }
+//    else if(state_ == program)
+//    {
+//        eap_tiPgmQuadPageIn12p5ns = stm_osGetSystemTime(/*idxTimer*/ 0u);
+//        eap_resultStartPgm = eap_osStartProgramQuadPage(&eap_prgDataBuf);
+//
+//        if(eap_resultStartPgm == rom_err_processPending)
+//        {
+//            eap_noWaitCyclesPgm = 0u;
+//            while(true)
+//            {
+//                eap_resultGetStatusPgm = eap_osGetStatusProgramQuadPage();
+//                if(eap_resultGetStatusPgm == rom_err_processPending)
+//                    ++ eap_noWaitCyclesPgm;
+//                else
+//                {
+//                    if(eap_resultGetStatusPgm == rom_err_noError)
+//                        state_ = success;
+//                    else
+//                        state_ = error;
+//
+//                    break;
+//                }
+//            }
+//            eap_tiPgmQuadPageIn12p5ns = stm_osGetSystemTime(/*idxTimer*/ 0u)
+//                                        - eap_tiPgmQuadPageIn12p5ns;
+//        }
+//        else
+//        {
+//            state_ = error;
+//            eap_tiPgmQuadPageIn12p5ns = stm_osGetSystemTime(/*idxTimer*/ 0u)
+//                                        - eap_tiPgmQuadPageIn12p5ns;
+//        }
+//    }
+//
+//    return state_ != error  &&  state_ != success;
+//}

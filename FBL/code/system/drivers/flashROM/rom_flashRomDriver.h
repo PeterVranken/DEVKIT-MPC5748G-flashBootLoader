@@ -1,7 +1,7 @@
-#ifndef ROM_FLASHROM_INCLUDED
-#define ROM_FLASHROM_INCLUDED
+#ifndef ROM_FLASHROMDRIVER_INCLUDED
+#define ROM_FLASHROMDRIVER_INCLUDED
 /**
- * @file rom_flashRom.h
+ * @file rom_flashRomDriver.h
  * Definition of public interface of flash ROM driver.
  *
  * Copyright (C) 2026 Peter Vranken (mailto:Peter_Vranken@Yahoo.de)
@@ -64,27 +64,33 @@ typedef enum
  * Global prototypes
  */
 
-/* Check the state of the flash driver. */
-bool rom_isFlashDriverBusy(void);
+/* Initialize the complete flash driver, including the sub-ordinated modules eap and dib. */
+void rom_osInitFlashRomDriver(void);
 
 /* Check if a memory address range is completely in the the flash ROM. */
 bool rom_isValidFlashAddressRange(uint32_t address, uint32_t size);
 
+/* Check the state of the flash driver: Is it possible to erase? */
+bool rom_osReadyToStartErase(void);
+
 /* Initiate erasure of a portion of the flash ROM. */
-bool rom_startEraseFlashMemory(uint32_t address, uint32_t noBytes);
+bool rom_osStartEraseFlashMemory(uint32_t address, uint32_t noBytes);
+
+/* Check the state of the flash driver: Is it possible to write programming data? */
+bool rom_osReadyToStartProgram(void);
 
 /* Initiate programming a number of bytes. */
-bool rom_startProgram(uint32_t address, const uint8_t *pDataToProgram, uint32_t noBytes);
+bool rom_osStartProgram(uint32_t address, const uint8_t *pDataToProgram, uint32_t noBytes);
     
 /* Force finalization and programming of partly written flash page. */
-void rom_flushProgramDataBuffer(void);
+void rom_osFlushProgramDataBuffer(void);
 
 /* Regularly called main function of driver. */
-void rom_flashRomMain(void);
+void rom_osFlashRomDriverMain(void);
 
 /*
  * Global inline functions
  */
 
 
-#endif  /* ROM_FLASHROM_INCLUDED */
+#endif  /* ROM_FLASHROMDRIVER_INCLUDED */

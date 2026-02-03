@@ -29,7 +29,7 @@
 #include <stddef.h>
 
 #include "typ_types.h"
-#include "rom_flashRom.h"
+#include "rom_flashRomDriver.h"
 
 /*
  * Defines

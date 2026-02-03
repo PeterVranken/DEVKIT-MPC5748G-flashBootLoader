@@ -28,9 +28,12 @@
  *   discardCro
  *   finalizeDtoMsg
  *   readU32FromCro
+ *   writeMta0IntoDto
+ *   isFlashDriverReady
+ *   finishDisconnect
  *   onDisconnect
  *   onSetMta
- *   submitUpload
+ *   finishUpload
  *   onUpload
  *   submitClearMemory
  *   onClearMemory
@@ -62,7 +65,7 @@
 #include "rtos.h"
 //#include "bsw_canInterface.h"
 #include "cdr_canDriverAPI.h"
-#include "rom_flashRom.h"
+#include "rom_flashRomDriver.h"
 
 /*
  * Defines
@@ -209,7 +212,7 @@ static struct ccpFsm_t
     /** An input event of the FSM: Sending the DTO failed. A signal to close the session. */
     bool canTxErr;
 
-} _ccpFsm;
+} _ccpFsm SECTION(.data.OS._ccpFsm);
 
 
 /*
@@ -474,15 +477,39 @@ static inline void writeMta0IntoDto(void)
 
 
 /**
- * The reaction on a received CCP DISCONNECT command.
+ * Check if flash ROM driver is ready to accept next command.\n
+ *   This method combines the drivers APIs for readiness for either erasure or programming.
+ * It it returns \a true then any new command can be initiates.
+ *   @todo
+ * Combining the readiness APIs of the driver allows combining some wait states here in the
+ * CCP protocol state machine, but it degrades the capabilities of the falsh ROM driver in
+ * doing certain things in parallel. If we selectively use the original APIs of the driver,
+ * then we would have to add some more specific wait states here in this state machine and
+ * would become a bit more efficient. The gain is however little. The main effect is that
+ * some program data could already be received and written to the driver, while erasure is
+ * ongoing. (Which would be beneficial only if we massively increase the number of quad-page
+ * buffers in the flash rom driver.) Complexity of the state machine rises as erasure is no
+ * longer a synchronous command; a failure result could be reposrted only with delay (as it
+ * is anyway for CCP PROGRAM commands).
  */
-static void onDisconnect(void)
+static bool isFlashDriverReady(void)
 {
-    /* Force last recently written data (if any) be still programmed before we disconnect. */
-    // TODO This is highly preliminary. Needs to be coordinated with pending erase and completion of programming of flash array. We likely need a wait state for disconnecting
-    rom_flushProgramDataBuffer();
+    return rom_osReadyToStartErase() && rom_osReadyToStartProgram();
+}
 
-    /* Since CCP can't have two session with two different ECU open at a time, the station
+
+/**
+ * When the availability the DISCONNECT comand has been checked, then this function
+ * completes the operation.\n
+ *   This function is either called immediately on reception of a CCP DISCONNECT command
+ * or a bit later, if we first had to wait for the flash ROM driver becoming idle.
+ */
+static void finishDisconnect(void)
+{
+    /* As the flash ROM driver is free after completion of all pending activities we may
+       return the DTO. */
+       
+    /* Since CCP can't have two sessions with two different ECUs open at a time, the station
        address in the command needs to be ours - otherwise we see a protocol error. The
        reaction is the same in both cases; we close the session. Only the returned response
        code will differ.
@@ -504,7 +531,28 @@ static void onDisconnect(void)
     #endif
 
     finalizeDtoMsg(reponseCode);
+    
+} /* finishDisconnect */
 
+
+/**
+ * The reaction on a received CCP DISCONNECT command.
+ */
+static void onDisconnect(void)
+{
+    /* Force last recently written data (if any) be still programmed before we disconnect. */
+    rom_osFlushProgramDataBuffer();
+
+    if(isFlashDriverReady())
+        finishDisconnect();
+    else
+    {
+        /* If the flash driver is busy then we enter the state to wait for its
+           availability. We don't store additional information, all we need to know
+           later remains in _ccpFsm and the CRO message buffer. */
+        setTimeout(CCP_TI_MAX_WAIT_FLASH_DRV_BUSY_IN_MS);
+        _ccpFsm.state = ccp_stateFsm_flashDrvBusy;
+    }
 } /* onDisconnect */
 
 
@@ -553,7 +601,7 @@ static void onSetMta(void)
  *   This function is either called immediately on reception of a CCP UPLOAD command
  * or a bit later, when we first had to wait for the flash ROM driver becoming idle.
  */
-static void submitUpload(void)
+static void finishUpload(void)
 {
     /* As the flash driver is free we may execute the upload command immediately and return
        the DTO. */
@@ -569,7 +617,7 @@ static void submitUpload(void)
     finalizeDtoMsg(ccpCmdRespCode_noError);
     _ccpFsm.state = ccp_stateFsm_connected;
 
-} /* submitUpload */
+} /* finishUpload */
 
 
 /**
@@ -583,8 +631,8 @@ static void onUpload(void)
                                                               );
     if(_ccpFsm.noBytesToProcess <= 5u  && isValidAddrRange)
     {
-        if(!rom_isFlashDriverBusy())
-            submitUpload();
+        if(isFlashDriverReady())
+            finishUpload();
         else
         {
             /* If the flash driver is busy then we enter the state to wait for its
@@ -617,7 +665,7 @@ static void submitClearMemory(void)
 {
     /* As the flash driver is free we submit the erase command immediately and wait in
        another state for its completion. */
-    if(rom_startEraseFlashMemory(_ccpFsm.mta0, _ccpFsm.noBytesToProcess))
+    if(rom_osStartEraseFlashMemory(_ccpFsm.mta0, _ccpFsm.noBytesToProcess))
     {
         #if VERBOSE >= 1
         iprintf( "Now clearing %lu Bytes at 0x%08lX.\r\n"
@@ -644,7 +692,7 @@ static void submitClearMemory(void)
  * client will receive the DTO only after completion. There are two blocking states
  * involved. When the command comes in then the flash driver could be still busy (in an
  * asynchronously executetd, earlier programm command). If it is free, the erase command
- * can be submitted but then we need to wait aiagn for its completion. The CCP state
+ * can be submitted but then we need to wait again for its completion. The CCP state
  * machine uses two pending states to synchronize with these blocking states of the flash
  * driver.
  */
@@ -656,7 +704,12 @@ static void onClearMemory(void)
                                                               );
     if(isValidAddrRange)
     {
-        if(!rom_isFlashDriverBusy())
+        /* If we had already written some data to program to the API of the flash ROM
+           driver, then we force it be comletely programmed before we can begin with
+           erasing. */
+        rom_osFlushProgramDataBuffer();
+
+        if(rom_osReadyToStartErase())
             submitClearMemory();
         else
         {
@@ -692,7 +745,7 @@ static void submitProgram(void)
        DTO. The actual programming is running asynchronously from now on in the flash
        driver. */
     enum ccpCmdResponseCode_t reponseCode;
-    if(rom_startProgram(_ccpFsm.mta0, _ccpFsm.pDataToProgram, _ccpFsm.noBytesToProcess))
+    if(rom_osStartProgram(_ccpFsm.mta0, _ccpFsm.pDataToProgram, _ccpFsm.noBytesToProcess))
     {
         #if VERBOSE >= 3
         iprintf( "Now programming %lu Bytes at 0x%08lX.\r\n"
@@ -752,7 +805,7 @@ static void onProgram(bool isProgram6)
                                                               );
     if(isValidAddrRange  &&  (isProgram6 || _ccpFsm.noBytesToProcess <= 5u))
     {
-        if(!rom_isFlashDriverBusy())
+        if(isFlashDriverReady())
             submitProgram();
         else
         {
@@ -830,7 +883,7 @@ static void onRxCroMsg(void)
     case ccp_stateFsm_connected:
         /* Stop the timeout, which limits the idle time of a session. */
         setTimeout(0u);
-        
+
         switch(_ccpFsm.croMsg.payload[0])
         {
         case ccpCmd_disconnect:
@@ -906,13 +959,12 @@ static void reSubmitCroCmd(void)
     assert(_ccpFsm.state == ccp_stateFsm_flashDrvBusy);
     switch(_ccpFsm.croMsg.payload[0])
     {
-// TODO DISCONNECT should use this mechanism, too, to wait for the flash driver to complete its last (program) action
-//    case ccpCmd_disconnect:
-//        submitDisconnect();
-//        break;
+    case ccpCmd_disconnect:
+        finishDisconnect();
+        break;
 
     case ccpCmd_upload:
-        submitUpload();
+        finishUpload();
         break;
 
     case ccpCmd_clearMemory:
@@ -937,17 +989,17 @@ static void reSubmitCroCmd(void)
  * Timer event for the protocol state machine.
  */
 static void onClockTick(void)
-{   
+{
     // TODO Make this another timer method
     if(_ccpFsm.tiWaitInMs > 0u)
         -- _ccpFsm.tiWaitInMs;
-    
+
     switch(_ccpFsm.state)
     {
     case ccp_stateFsm_aborting:
         /* Try waiting for flash ROM driver being idle again, then abort everything and
            return to state idle. No DTO is sent any more. */
-        if(checkTimeout(!rom_isFlashDriverBusy()) != to_busy)
+        if(checkTimeout(isFlashDriverReady()) != to_busy)
         {
 #if VERBOSE >= 1
             iprintf("CCP session ends now.\r\n");
@@ -958,17 +1010,17 @@ static void onClockTick(void)
 
     case ccp_stateFsm_flashDrvBusy:
         /* A CCP command is pending. The demanded action (erase, program) could not be
-           initiate yet, since the flash ROM driver was still busy. Now check its state
+           initiated yet, since the flash ROM driver was still busy. Now check its state
            again and go ahead when eventually free again. However, don't block forever,
            consider a timeout. */
-        switch(checkTimeout(!rom_isFlashDriverBusy()))
+        switch(checkTimeout(isFlashDriverReady()))
         {
         case to_done:
             /* The CRO message buffer still contains the CRO message, which we could
                not process yet due to the flash driver being busy. Now we try the
                evaluation of the message again. */
             reSubmitCroCmd();
-            break;            
+            break;
         case to_timeout:
             #if VERBOSE >= 2
             iprintf("Flash driver stuck, CCP command fails.\r\n");
@@ -987,7 +1039,7 @@ static void onClockTick(void)
     case ccp_stateFsm_erasing:
         /* Erasure of flash has been initiated at the flash driver. Now wait for completion.
            However, don't block forever, consider a timeout. */
-        switch(checkTimeout(!rom_isFlashDriverBusy()))
+        switch(checkTimeout(isFlashDriverReady()))
         {
         case to_done:
             /* Erasure completed. Eventually, we can send out the DTO. */
@@ -997,7 +1049,7 @@ static void onClockTick(void)
             /* Note, CLEAR_MEMORY must not increment the MTA. */
             _ccpFsm.state = ccp_stateFsm_connected;
             finalizeDtoMsg(ccpCmdRespCode_noError);
-            break;            
+            break;
         case to_timeout:
             #if VERBOSE >= 2
             iprintf("Flash driver stuck in erase, CCP command fails.\r\n");
@@ -1116,7 +1168,7 @@ void ccp_taskOsRxCcp(uint32_t taskParam)
         /* Run the flash ROM driver from the same task as the CCP protocol. This eliminates
            all race conditions between the two and all commanding and error/result checking
            becomes most easy. */
-        rom_flashRomMain();
+        rom_osFlashRomDriverMain();
     }
 
     if(_ccpFsm.dtoMsg.isResponseReady)

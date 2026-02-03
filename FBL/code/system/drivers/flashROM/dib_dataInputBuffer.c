@@ -24,11 +24,13 @@
  * along with this program. If not, see <http://www.gnu.org/licenses/>.
  */
 /* Module interface
- *   dib_isAddressInBuffer
+ *   dib_osIsAddressInBuffer
  *   dib_getNoFreeInputBuffers
- *   dib_acquireInputBuffer
- *   dib_acquireProgramBuffer
- *   dib_releaseBuffer
+ *   dib_osAcquireInputBuffer
+ *   dib_getBufferPayload
+ *   dib_osWriteDataIntoBuffer
+ *   dib_osAcquireProgramBuffer
+ *   dib_osReleaseBuffer
  * Local functions
  *   releaseBuffer
  */
@@ -46,7 +48,7 @@
 #include <string.h>
 #include <assert.h>
 
-#include "rom_flashRom.h"
+#include "rom_flashRomDriver.h"
 #include "eap_eraseAndProgram.h"
 
 /*
@@ -55,6 +57,7 @@
 
 /* Blocking free buffer filling (if programming is faster than filling) requires at least
    four buffers. */
+#warning TBC Three buffers should suffice. Ready condition to be modified in rom
 #define NO_DATA_BUFFERS 4u
 
 /*
@@ -84,7 +87,7 @@ struct dib_pageProgramBuffer_t
  */
 
 /** Four alternatingly used input buffers. */
-static dib_pageProgramBuffer_t _inputBufAry[NO_DATA_BUFFERS] =
+static dib_pageProgramBuffer_t _inputBufAry[NO_DATA_BUFFERS] SECTION(.data.OS._inputBufAry) =
 {
     [0 ... sizeOfAry(_inputBufAry)-1] =
     {
@@ -101,7 +104,7 @@ static dib_pageProgramBuffer_t _inputBufAry[NO_DATA_BUFFERS] =
 };
 
 /** The number of currently free data buffers. */
-static unsigned int _noFreeInputBufs = NO_DATA_BUFFERS;
+static unsigned int SDATA_OS(_noFreeInputBufs) = NO_DATA_BUFFERS;
 
 /*
  * Function implementation
@@ -150,11 +153,11 @@ unsigned int dib_getNoFreeInputBuffers(void)
 /**
  * Get a buffer for writing input data.\n
  *   After filling the buffer with data, the buffer needs to be released again using
- * dib_releaseBuffer().
+ * dib_osReleaseBuffer().
  *   @return
  * Get the buffer by reference or NULL if there is currently no free buffer available.
  */
-dib_pageProgramBuffer_t *dib_acquireInputBuffer(void)
+dib_pageProgramBuffer_t *dib_osAcquireInputBuffer(void)
 {
     dib_pageProgramBuffer_t *pBuf = NULL;
 
@@ -176,7 +179,7 @@ dib_pageProgramBuffer_t *dib_acquireInputBuffer(void)
 
     return pBuf;
 
-} /* dib_getInputBuffer */
+} /* dib_osAcquireInputBuffer */
 
 
 /**
@@ -193,7 +196,7 @@ eap_quadPageProgramBuffer_t *dib_getBufferPayload(dib_pageProgramBuffer_t *pBuf)
  *   @return
  * Get \a true if \a address is in the buffer space.
  */
-bool dib_isAddressInBuffer(dib_pageProgramBuffer_t * const pBuf, uint32_t address)
+bool dib_osIsAddressInBuffer(dib_pageProgramBuffer_t * const pBuf, uint32_t address)
 {
     assert(rom_isValidFlashAddressRange(address, /*noBytes*/ 1));
     assert(pBuf->state != dib_bufSt_free  &&  pBuf->state != dib_bufSt_toBePrgd);
@@ -209,15 +212,16 @@ bool dib_isAddressInBuffer(dib_pageProgramBuffer_t * const pBuf, uint32_t addres
         /* Buffer is in (filling) use. We need to compare the address. */
         return pBuf->pageBuf.address == GET_ADDR_OF_QUAD_PAGE(address);
     }
-} /* dib_isAddressInBuffer */
+} /* dib_osIsAddressInBuffer */
 
 
 /* Write some bytes into a buffer (which are intended for later programming). */
-uint32_t dib_writeDataIntoBuffer( dib_pageProgramBuffer_t * const pBuf
-                                , uint32_t address
-                                , uint32_t noBytes
-                                , const uint8_t dataAry[]
-                                )
+#warning TODOC
+uint32_t dib_osWriteDataIntoBuffer( dib_pageProgramBuffer_t * const pBuf
+                                  , uint32_t address
+                                  , uint32_t noBytes
+                                  , const uint8_t dataAry[]
+                                  )
 {
     assert(rom_isValidFlashAddressRange(address, noBytes));
 
@@ -259,18 +263,18 @@ uint32_t dib_writeDataIntoBuffer( dib_pageProgramBuffer_t * const pBuf
 
     return noBytesToCopy;
 
-} /* dib_writeDataIntoBuffer */
+} /* dib_osWriteDataIntoBuffer */
 
 
 /**
  * Get a buffer for programming into the flash array.\n
  *   The buffer pool is searched for a buffer, which had been filled with data before.\n
  *   After programming the contained data, the buffer needs to be released again using
- * dib_releaseBuffer().
+ * dib_osReleaseBuffer().
  *   @return
  * Get such a buffer or NULL if no filled buffer is ready for programming.
  */
-dib_pageProgramBuffer_t *dib_acquireProgramBuffer(void)
+dib_pageProgramBuffer_t *dib_osAcquireProgramBuffer(void)
 {
     dib_pageProgramBuffer_t *pBuf = NULL;
 
@@ -280,23 +284,23 @@ dib_pageProgramBuffer_t *dib_acquireProgramBuffer(void)
 
     return pBuf;
 
-} /* dib_acquireProgramBuffer */
+} /* dib_osAcquireProgramBuffer */
 
 
 /**
  * Return a buffer after use.
  *   @param[in] pBuf
- * The buffer, which had before been acquired with either dib_acquireInputBuffer() or
- * dib_acquireProgramBuffer().
+ * The buffer, which had before been acquired with either dib_osAcquireInputBuffer() or
+ * dib_osAcquireProgramBuffer().
  *   @param[in] submitForProgramming
  * If the buffer had been acquired for filling then this flag is now set to \a true. This
  * hands the buffer over to the flash ROM driver core for programming.\n
  *   If it should be discarded or if it had been acquired for programming, then pass \a
  * false.
  */
-void dib_releaseBuffer(dib_pageProgramBuffer_t * const pBuf, bool submitForProgramming)
+void dib_osReleaseBuffer(dib_pageProgramBuffer_t * const pBuf, bool submitForProgramming)
 {
     releaseBuffer(pBuf, submitForProgramming);
 
-} /* dib_releaseBuffer */
+} /* dib_osReleaseBuffer */
 
