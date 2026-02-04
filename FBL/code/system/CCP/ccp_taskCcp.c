@@ -656,7 +656,7 @@ static void onUpload(void)
 
 
 /**
- * When the availability and the correctness of the erase comand have been checked, then
+ * When the availability and the correctness of the erase command have been checked, then
  * this function initiates the operation at the flash driver.\n
  *   This function is either called immediately on reception of a CCP CLEAR_MEMORY command
  * or a bit later, when we first had to wait for the flash ROM driver becoming idle.
@@ -691,7 +691,7 @@ static void submitClearMemory(void)
  *   The command is executed synchronously with respect to the CCP protocol flow. The CCP
  * client will receive the DTO only after completion. There are two blocking states
  * involved. When the command comes in then the flash driver could be still busy (in an
- * asynchronously executetd, earlier programm command). If it is free, the erase command
+ * asynchronously executed, earlier program command). If it is free, the erase command
  * can be submitted but then we need to wait again for its completion. The CCP state
  * machine uses two pending states to synchronize with these blocking states of the flash
  * driver.
@@ -705,7 +705,7 @@ static void onClearMemory(void)
     if(isValidAddrRange)
     {
         /* If we had already written some data to program to the API of the flash ROM
-           driver, then we force it be comletely programmed before we can begin with
+           driver, then we force it be completely programmed before we can begin with
            erasing. */
         rom_osFlushProgramDataBuffer();
 
@@ -734,7 +734,7 @@ static void onClearMemory(void)
 
 
 /**
- * When the availability and the correctness of the PROGRAM or PROGRAM_6 comand have been
+ * When the availability and the correctness of the PROGRAM or PROGRAM_6 command have been
  * checked, then this function initiates the operation at the flash driver.\n
  *   This function is either called immediately on reception of a CCP PROGRAM(_6) command
  * or a bit later, when we first had to wait for the flash ROM driver becoming idle.
@@ -754,7 +754,7 @@ static void submitProgram(void)
                );
         #endif
 
-        /* The MTA is updated and the new value echoes in the reponse message. */
+        /* The MTA is updated and the new value echoes in the response message. */
         _ccpFsm.mta0 += _ccpFsm.noBytesToProcess;
         writeMta0IntoDto();
 
@@ -782,7 +782,7 @@ static void submitProgram(void)
  * till the driver is available again. After this wait phase, the DTO is returned.\n
  *   It depends on the speed of programming and CCP data transmission, what will typically
  * happen. If programming is in average faster than CCP data transfer, then we will rarely see
- * the blocking happen and CCP data tansfer is running at full speed. If vice versa, then
+ * the blocking happen and CCP data transfer is running at full speed. If vice versa, then
  * programming will slow down the CCP data transfer to the average rate of programming.
  *   @program[in] isProgram6
  * The same function is used for CCP command PROGRAM and PROGRAM_6. The argument tells,

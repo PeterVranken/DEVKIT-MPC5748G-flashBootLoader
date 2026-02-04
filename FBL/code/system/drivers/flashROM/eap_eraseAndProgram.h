@@ -56,6 +56,11 @@
 #define EAP_GET_ADDR_OFFS_IN_QUAD_PAGE(/*uint32_t*/ addr)   \
                                 (((uint32_t)(addr)) & EAP_MASK_C55FMC_MASK_ADDR_IN_QUAD_PAGE)
 
+/** Testing the integration of the flash ROM driver is supported by a simple mockup, which
+    has the same API but which just emulates the true operation. Testing becomes possible
+    without touching or modifying the flash ROM array. */
+#define TEST_WITH_MOCKUP    1
+
 
 /*
  * Global type definitions
@@ -119,14 +124,8 @@ rom_errorCode_t eap_osStartProgramQuadPage(eap_quadPageProgramBuffer_t * const p
 /* Check the status of a programming operation. */
 rom_errorCode_t eap_osGetStatusProgramQuadPage(void);
 
-/* This function stops all erase and program activities of the C55FMC. */
-void eap_abortEraseAndProgram(void);
-
-bool eap_firstTest(bool start);
-
 /*
  * Global inline functions
  */
-
 
 #endif  /* EAP_ERASEANDPROGRAM_INCLUDED */

@@ -23,13 +23,13 @@
  *   eap_osGetStatusEraseFlashBlocks
  *   eap_osStartProgramQuadPage
  *   eap_osGetStatusProgramQuadPage
- *   eap_abortEraseAndProgram
  * Local functions
  *   disableAllFlashBlocks
  *   enableFlashBlocks
  *   invalidateDCache
  *   isQuadPageBlank
  *   verifyQuadPage
+ *   abortEraseAndProgram
  */
 
 /*
@@ -37,6 +37,8 @@
  */
 
 #include "eap_eraseAndProgram.h"
+
+#if TEST_WITH_MOCKUP != 1
 
 #include <stdint.h>
 #include <stdbool.h>
@@ -483,12 +485,34 @@ static bool verifyQuadPage(const eap_quadPageProgramBuffer_t * const pPrgDataBuf
 } /* verifyQuadPage */
 
 
+
+/**
+ * This function stops all erase and program activities of the C55FMC.\n
+ *   It can be called in case of errors or unexpected states.
+ */
+static void abortEraseAndProgram(void)
+{
+    /* The mode of operation bits are disabled in distinct steps. This is a rule from
+       the bit locking. RM48, 74.6, Table 74-3, p.3679. */
+    // TODO Abortion is likely not properly implemented. Compare conditions RM48, 74.5.1, p.3656, for resetting EHV. However, seems to affect only modes, we don't use anyway
+    C55FMC->MCR &= ~C55FMC_MCR_PSUS_MASK;
+    C55FMC->MCR &= ~C55FMC_MCR_ESUS_MASK;
+    C55FMC->MCR &= ~C55FMC_MCR_EHV_MASK;
+    C55FMC->MCR &= ~C55FMC_MCR_PGM_MASK;
+    C55FMC->MCR &= ~C55FMC_MCR_ERS_MASK;
+
+    /* Now we can restore the default settings for accesibility of the flash blocks. */
+    disableAllFlashBlocks();
+
+} /* abortEraseAndProgram */
+
+
 /**
  * Initialize the flash ROM driver.
  */
 void eap_osInitFlashRomDriver(void)
 {
-    eap_abortEraseAndProgram();
+    abortEraseAndProgram();
 
 #ifdef DEBUG
     for(unsigned int idxBlk=0u; idxBlk<sizeOfAry(flashBlockDescAry); ++idxBlk)
@@ -611,7 +635,7 @@ rom_errorCode_t eap_osStartEraseFlashBlocks(uint32_t addressFrom, uint32_t noByt
     else
     {
         /* Turn off high voltage, reset all operation request bits and lock flash blocks. */
-        eap_abortEraseAndProgram();
+        abortEraseAndProgram();
 
         retCode = rom_err_unexpectedHwState;
     }
@@ -665,7 +689,7 @@ rom_errorCode_t eap_osGetStatusEraseFlashBlocks(void)
     if(retCode != rom_err_processPending)
     {
         /* Turn off high voltage, reset all operation request bits and lock flash blocks. */
-        eap_abortEraseAndProgram();
+        abortEraseAndProgram();
 
         /* Regardless whether erasure succeeded or failed, flash ROM array contents may
            have altered and we have the (very high) risk of a D-cache inconsistency. We
@@ -696,7 +720,7 @@ rom_errorCode_t eap_osGetStatusEraseFlashBlocks(void)
  * programming of the quad-page has completed - either until
  * eap_osGetStatusProgramQuadPage() has reported the end of the operation (no matter
  * whether successful) or until the programming mode has been aborted using
- * eap_abortEraseAndProgram().
+ * abortEraseAndProgram().
  */
 rom_errorCode_t eap_osStartProgramQuadPage(eap_quadPageProgramBuffer_t * const pPrgDataBuf)
 {
@@ -767,7 +791,7 @@ rom_errorCode_t eap_osStartProgramQuadPage(eap_quadPageProgramBuffer_t * const p
     else
     {
         /* Turn off high voltage, reset all operation request bits and lock flash blocks. */
-        eap_abortEraseAndProgram();
+        abortEraseAndProgram();
 
         retCode = rom_err_unexpectedHwState;
     }
@@ -820,7 +844,7 @@ rom_errorCode_t eap_osGetStatusProgramQuadPage(void)
     if(retCode != rom_err_processPending)
     {
         /* Turn off high voltage, reset all operation request bits and lock flash blocks. */
-        eap_abortEraseAndProgram();
+        abortEraseAndProgram();
 
         /* Before we continue with the verify, we invalidate all quad-page addresses in the
            D-cache - without we would likely not read the bytes physcally programmed in the
@@ -837,27 +861,6 @@ rom_errorCode_t eap_osGetStatusProgramQuadPage(void)
     return retCode;
 
 } /* eap_osGetStatusProgramQuadPage */
-
-
-/**
- * This function stops all erase and program activities of the C55FMC.\n
- *   It can be called in case of errors or unexpected states.
- */
-void eap_abortEraseAndProgram(void)
-{
-    /* The mode of operation bits are disabled in distinct steps. This is a rule from
-       the bit locking. RM48, 74.6, Table 74-3, p.3679. */
-    // TODO Abortion is likely not properly implemented. Compare conditions RM48, 74.5.1, p.3656, for resetting EHV. However, seems to affect only modes, we don't use anyway
-    C55FMC->MCR &= ~C55FMC_MCR_PSUS_MASK;
-    C55FMC->MCR &= ~C55FMC_MCR_ESUS_MASK;
-    C55FMC->MCR &= ~C55FMC_MCR_EHV_MASK;
-    C55FMC->MCR &= ~C55FMC_MCR_PGM_MASK;
-    C55FMC->MCR &= ~C55FMC_MCR_ERS_MASK;
-
-    /* Now we can restore the default settings for accesibility of the flash blocks. */
-    disableAllFlashBlocks();
-
-} /* eap_abortEraseAndProgram */
 
 
 /***************************** Test, temporary code ******************/
@@ -960,3 +963,4 @@ void eap_abortEraseAndProgram(void)
 //
 //    return state_ != error  &&  state_ != success;
 //}
+#endif /* TEST_WITH_MOCKUP */

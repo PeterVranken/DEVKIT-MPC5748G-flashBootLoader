@@ -196,7 +196,7 @@ bool rom_osStartEraseFlashMemory(uint32_t address, uint32_t noBytes)
     if(rom_osReadyToStartErase() && rom_isValidFlashAddressRange(address, noBytes))
     {
         /* End address: Overflow protection sits in rom_isValidFlashAddressRange(). */
-        _isBusyErasing = eap_osStartEraseFlashBlocks(address, address+noBytes)
+        _isBusyErasing = eap_osStartEraseFlashBlocks(address, noBytes) 
                          == rom_err_processPending;
         return _isBusyErasing;
     }
@@ -285,7 +285,7 @@ bool rom_osStartProgram(uint32_t address, const uint8_t *pDataToProgram, uint32_
     else
     {
         /* The data might still fit in the remaining buffer space, but we don't take the
-           risk of getting stuck after coyping the data partially. We reject the command. */
+           risk of getting stuck after copying the data partially. We reject the command. */
         return false;
     }
 } /* rom_osStartProgram */
@@ -321,8 +321,8 @@ void rom_osFlushProgramDataBuffer(void)
  */ 
 void rom_osFlashRomDriverMain(void)
 {
-    /* If client code had requested to program th half-way filled input buffer then push it
-       back into the pool of pending program data bufffers. */
+    /* If client code had requested to program the half-way filled input buffer then push it
+       back into the pool of pending program data buffers. */
     if(_flushPgmInputBuf)
     {
         dib_osReleaseBuffer(_pPgmInputBuf, /*submitForProgramming*/ true);
