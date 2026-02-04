@@ -134,7 +134,7 @@ bool rom_isValidFlashAddressRange(uint32_t address, uint32_t size)
 
     /* The hard-coded limits are checked for consistency with the flash block configuration
        in the driver initialization. */
-    return address >= 0x00FA0000u  &&  endAddr <= 0x01580000u;
+    return address >= 0x00FC0000u  &&  endAddr <= 0x01580000u;
 
 #elif defined(MCU_MPC5775B) || defined(MCU_MPC5775E)
 # error Implement rom_isValidFlashAddressRange for MPC5775B/E
