@@ -100,8 +100,7 @@ static bool SBSS_OS(_flushPgmInputBuf) = false;
  */
 void rom_osInitFlashRomDriver(void)
 {
-#warning Implement dib_osInitDataInputBuffer
-//    dib_osInitDataInputBuffer();
+    dib_osInitBufferManagement();
     eap_osInitFlashRomDriver();
     
     _isBusyErasing = false;
@@ -226,7 +225,29 @@ bool rom_osReadyToStartProgram(void)
 
 
 /**
- * Initiate programming a number of bytes.
+ * Initiate programming a number of bytes.\n
+ *   The target \a address is an arbitrary address, which points into a quad-page.
+ * Buffering always holds zero or one quad-page. Prior to the first call of this function
+ * or after a call of rom_osFlushProgramDataBuffer(), there is no page. Once using this
+ * function, always the last used quad-page is held. If \a address points into the
+ * currently held quad-page then the data of this page can be completed or modified. Once
+ * an address points to another quad-page then the one held so far is considered fianlized
+ * and it is submitted for programming. The other one becomes the held one.\n
+ *   Bytes of a quad-page, which have not at all been written are set to 0xFF or, with
+ * other words, they remain unprogrammed, when the page is evetually submitted for
+ * programming.\n
+ *   This pattern supports the most common use-case: Writing all bytes to program in
+ * strictly rising address order. In this case no attention needs to be drawn to the
+ * quad-page structure of the flash ROM array. No matter if first and last address are
+ * quad-page boundaries, no matter if data is contiguous or if there are gaps in the
+ * addresses, the result is always as expected. Only a call of
+ * rom_osFlushProgramDataBuffer() is required after the very last call of this function to
+ * ensure that the last held quad-page is still submitted for programming.\n
+ *   Caution, if the function is called with addresses going up and down. This can easily
+ * lead to quad-pages, which are submitted repeatedly for programming, and this will almost
+ * certainly invalidate the quad-page after programming. ECC bits won't be set correct and
+ * access to the quad-page after programming will cause exceptions. The only way out is
+ * then the erasure of the complete flash block such a quad-page resides in.
  *   @return
  * Get \a true if all bytes were put into the input buffer. If \a false is returned then at
  * least one byte is lost and the overall flash programming process has failed.
@@ -237,7 +258,7 @@ bool rom_osReadyToStartProgram(void)
  * The bytes to program. The data is copied into some internal buffer space, so the data
  * needs to be valid only during the call of this function.
  *   @param[in] noBytes
- * The number of bytes to program. The allowed range is 1..#EAP_C55FMC_SIZE_OF_QUAD_PAGE.
+ * The number of bytes to program. The allowed range is 1..(#EAP_C55FMC_SIZE_OF_QUAD_PAGE+1).
  */
 bool rom_osStartProgram(uint32_t address, const uint8_t *pDataToProgram, uint32_t noBytes)
 {
@@ -277,6 +298,22 @@ bool rom_osStartProgram(uint32_t address, const uint8_t *pDataToProgram, uint32_
                                      , noBytes - noBytesWritten
                                      , pDataToProgram + noBytesWritten
                                      );
+            
+            /* The function is specified to allow at maximum EAP_C55FMC_SIZE_OF_QUAD_PAGE+1
+               bytes to write at once. If this assertion fires then this pre-condition of
+               the function call has been violated in a harmful, data loss-causing way.
+               Violations of the pre-condition, which are harmless and don't impact proper
+               functionality aren't reported:
+                 Only EAP_C55FMC_SIZE_OF_QUAD_PAGE+1 will fit even under worst conditions.
+                 Under worst conditions, the current buffer can't be used at all; it has
+               another quad-page address. The first byte to write is the last one of the
+               first acquired quad-page input buffer, so that the rest of the bytes will
+               entirely fill the second acquired input buffer. Acquisition of more input
+               buffers is imaginable but not guaranteed.
+                 More bytes than EAP_C55FMC_SIZE_OF_QUAD_PAGE+1 will most often fit but
+               there is no worst case guarantee. In particular, for the common use-case of
+               strictly sequentially writing all bytes, even 2*EAP_C55FMC_SIZE_OF_QUAD_PAGE
+               would always fit. */
             assert(noBytesWritten2nd + noBytesWritten == noBytes);
         }
 

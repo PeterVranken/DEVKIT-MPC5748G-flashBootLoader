@@ -24,12 +24,13 @@
  * along with this program. If not, see <http://www.gnu.org/licenses/>.
  */
 /* Module interface
+ *   dib_osInitBufferManagement
  *   dib_osIsAddressInBuffer
  *   dib_getNoFreeInputBuffers
  *   dib_osAcquireInputBuffer
- *   dib_getBufferPayload
  *   dib_osWriteDataIntoBuffer
  *   dib_osAcquireProgramBuffer
+ *   dib_getBufferPayload
  *   dib_osReleaseBuffer
  * Local functions
  *   releaseBuffer
@@ -57,7 +58,6 @@
 
 /* Blocking free buffer filling (if programming is faster than filling) requires at least
    four buffers. */
-#warning TBC Three buffers should suffice. Ready condition to be modified in rom
 #define NO_DATA_BUFFERS 4u
 
 /*
@@ -140,6 +140,24 @@ static inline void releaseBuffer( dib_pageProgramBuffer_t * const pBuf
 
 
 /**
+ * Initailize the module prior to use of any of its APIs.
+ */
+void dib_osInitBufferManagement(void)
+{
+    for(unsigned int idxBuf=0u; idxBuf<sizeOfAry(_inputBufAry); ++idxBuf)
+    {
+        dib_pageProgramBuffer_t * const pPrgBuf = &_inputBufAry[idxBuf];
+        pPrgBuf->pageBuf.address = 0u;
+        memset(&pPrgBuf->pageBuf.data_b[0], 0, sizeof(pPrgBuf->pageBuf.data_b));
+        pPrgBuf->state = dib_bufSt_free;
+    }
+
+    _noFreeInputBufs = sizeOfAry(_inputBufAry);
+
+} /* dib_osInitBufferManagement */
+
+
+/**
  * Query the number of currently available input buffers.
  *   @return
  * Get the count of available buffers.
@@ -183,15 +201,6 @@ dib_pageProgramBuffer_t *dib_osAcquireInputBuffer(void)
 
 
 /**
- * Get the data contents of a buffer.
- */
-eap_quadPageProgramBuffer_t *dib_getBufferPayload(dib_pageProgramBuffer_t *pBuf)
-{
-    return &pBuf->pageBuf;
-}
-
-
-/**
  * Check for an address if it points into a given buffer.
  *   @return
  * Get \a true if \a address is in the buffer space.
@@ -215,8 +224,31 @@ bool dib_osIsAddressInBuffer(dib_pageProgramBuffer_t * const pBuf, uint32_t addr
 } /* dib_osIsAddressInBuffer */
 
 
-/* Write some bytes into a buffer (which are intended for later programming). */
-#warning TODOC
+/**
+ * Write some bytes into a buffer (which are intended for later programming). The buffer
+ * has been acquired before by a call of dib_osAcquireInputBuffer().\n
+ *   The first call of this function for a given buffer * \a pBuf implicitly allocates the
+ * buffer to the quad-page \a address points to. (\a address can point to any byte in the
+ * quad-page, not necessarily the first one.)\n
+ *   All bytes at address+0 ... address+(noBytes-1), which belong to the quad-page, the
+ * buffer is allocated to, are written into the buffer, all others are ignored and have no
+ * effect.
+ *   @return
+ * Get the number \a n of actually copied data bytes. These are the bytes, which belong into the
+ * quad-page, the buffer is allocated to. It are the bytes at addresses \a address + 0 ... \a
+ * address + \a n, or, with other words, the first \a n bytes from \a dataAry[].\n
+ *   The common use case would be writing the now ignored, remaining bytes from \a
+ * dataAry[] into another subsequently acquired buffer.
+ *   @param[in] address
+ * The target address of the bytes in the flash ROM array, i.e., the absolute address at
+ * which they should be later programmed.
+ *   @param[in] noBytes
+ * The number of bytes, which would ideally be written to the buffer.
+ *   @param[in] dataAry
+ * The \a noBytes data bytes, which are intended for programming at \a address. They are
+ * (partly) copied into the buffer, so \a dataAry needs to be valid only till exit from
+ * this function.
+ */
 uint32_t dib_osWriteDataIntoBuffer( dib_pageProgramBuffer_t * const pBuf
                                   , uint32_t address
                                   , uint32_t noBytes
@@ -285,6 +317,15 @@ dib_pageProgramBuffer_t *dib_osAcquireProgramBuffer(void)
     return pBuf;
 
 } /* dib_osAcquireProgramBuffer */
+
+
+/**
+ * Get the data contents of a buffer.
+ */
+eap_quadPageProgramBuffer_t *dib_getBufferPayload(dib_pageProgramBuffer_t *pBuf)
+{
+    return &pBuf->pageBuf;
+}
 
 
 /**

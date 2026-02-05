@@ -52,14 +52,14 @@ typedef struct dib_pageProgramBuffer_t dib_pageProgramBuffer_t;
  * Global prototypes
  */
 
+/* Initailize the module prior to use of any of its APIs. */
+void dib_osInitBufferManagement(void);
+
 /* Query the number of currently available input buffers. */
 unsigned int dib_getNoFreeInputBuffers(void);
 
 /* Get a buffer for writing input data. */
 dib_pageProgramBuffer_t *dib_osAcquireInputBuffer(void);
-
-/* Get the data contents of a buffer. */
-eap_quadPageProgramBuffer_t *dib_getBufferPayload(dib_pageProgramBuffer_t *pBuf);
 
 /* Check for an address if it points into a given buffer. */
 bool dib_osIsAddressInBuffer(dib_pageProgramBuffer_t *pBuf, uint32_t address);
@@ -73,6 +73,9 @@ uint32_t dib_osWriteDataIntoBuffer( dib_pageProgramBuffer_t *pBuf
 
 /* Get a buffer for programming data. */
 dib_pageProgramBuffer_t *dib_osAcquireProgramBuffer(void);
+
+/* Get the data contents of a buffer. */
+eap_quadPageProgramBuffer_t *dib_getBufferPayload(dib_pageProgramBuffer_t *pBuf);
 
 /* Submit a buffer for programming. */
 void dib_osReleaseBuffer(dib_pageProgramBuffer_t *pBuf, bool submitForProgramming);

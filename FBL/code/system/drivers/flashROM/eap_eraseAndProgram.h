@@ -59,7 +59,7 @@
 /** Testing the integration of the flash ROM driver is supported by a simple mockup, which
     has the same API but which just emulates the true operation. Testing becomes possible
     without touching or modifying the flash ROM array. */
-#define TEST_WITH_MOCKUP    0
+#define TEST_WITH_MOCKUP    1
 
 
 /*

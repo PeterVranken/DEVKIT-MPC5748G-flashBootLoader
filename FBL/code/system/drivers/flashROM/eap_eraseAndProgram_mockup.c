@@ -54,7 +54,7 @@
 /** Enable (1) or disable (0) logging of all programmed bytes. Logging significantly slows
     down the programming speed and can be used only with small data set. If set to 0, the
     the emulation behaves identically to the real hardware (with respect to timing). */
-#define LOG_PROGRAMMED_DATA     1
+#define LOG_PROGRAMMED_DATA     0
 
 /** The STM timer used for timeouts by zero based index. */
 #define TIMER 2u
