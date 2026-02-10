@@ -104,20 +104,23 @@
  */
 
 /** Simple counter of 1ms application task invokations. Used for timing operations. */
-volatile static unsigned int DATA_P1(_cntTask1ms) = 0;
+static volatile unsigned int BSS_P1(_cntTask1ms) = 0;
 
 /** Simple counter of 10ms application task invokations. Used for timing operations. */
-volatile static unsigned int DATA_P1(_cntTask10ms) = 0;
+static volatile unsigned int BSS_P1(_cntTask10ms) = 0;
+
+/** Flag, whether reporting of general status is enabled. */
+static volatile bool BSS_P1(_enableReportingStatus) = false;
 
 /** World time: The sum of this variable (unit 1ms) and \a _cntTask1ms (unit 1ms) is the
     world time, represented as number of Milliseconds since beginning of the day. */
-static typeof(_cntTask1ms) DATA_P1(_offsetInS) = 0;
+static typeof(_cntTask1ms) BSS_P1(_offsetInS) = 0;
 
 /** Status information time output: Counter until next time printing. */
-static uint16_t DATA_P1(_cntPrintTime) = 0u;
+static uint16_t BSS_P1(_cntPrintTime) = 0u;
 
 /** Status information time output: Period of time printing. */
-static uint16_t DATA_P1(_tiCycleTimeInS) = 0u;
+static uint16_t BSS_P1(_tiCycleTimeInS) = 0u;
 
 /*
  * Function implementation
@@ -307,6 +310,7 @@ static void help()
     "Type:\r\n"
     "help: Get this help text\r\n"
     "show c, show w: Show details of software license\r\n"
+    "show CPU [on|off]: Enable/disable reporting of average CPU load\r\n"
     "show stack: Print once the current stack reserve of all processes\r\n"
     "show errors: Print once the total number of process errors recorded in the kernel\r\n"
     "show time [tiCycleInS]: Enable/disable regular display of current time\r\n"
@@ -473,15 +477,19 @@ int32_t bsw_taskUser10ms(uint32_t PID ATTRIB_DBG_ONLY, uint32_t taskParam ATTRIB
                 else if(stricmp(argV[1], "stack") == 0)
                 {
                     /* Report the stack sizes now and once. */
-                    // TODO We need proper export of the process IDs by the BSW.
                     iprintf( "Stack reserve in Byte:\r\n"
                              "  Operating system:  %hu\r\n"
                              "  APSW (QM process): %hu\r\n"
                              "  Safety process:    %hu\r\n"
-                           , rtos_getStackReserve(/*pidOS*/     0u)
-                           , rtos_getStackReserve(/*pidAPSW*/   1u)
-                           , rtos_getStackReserve(/*pidSafety*/ 2u)
+                           , bsw_stackReserveProcessOS
+                           , bsw_stackReserveProcessAPSW
+                           , bsw_stackReserveProcessSafety
                            );
+                }
+                else if(stricmp(argV[1], "CPU") == 0)
+                {
+                    const bool isOn = argC == 2u  || stricmp(argV[2], "off") != 0u;
+                    _enableReportingStatus = isOn;
                 }
                 else if(stricmp(argV[1], "errors") == 0)
                 {
@@ -656,6 +664,20 @@ int32_t bsw_taskUser1000ms(uint32_t PID ATTRIB_DBG_ONLY, uint32_t taskParam ATTR
     static bool SDATA_P1(isOn_) = false;
     lbd_setLED(lbd_led_7_DS4, isOn_=!isOn_);
 
-    return 0;
+    /* Report CPU load. */
+    static uint8_t SDATA_P1(cntCycles_) = 0u;
+    static uint16_t SDATA_P1(maxCpuLoad_) = 0u;
+    const uint16_t cpuLoad = bsw_cpuLoad;
+    if(_enableReportingStatus && (cntCycles_ % 4u) == 3u)
+    {
+        printf("CPU load: %.1f%%\r\n", f2d((float)maxCpuLoad_ / 10.0f));
+        maxCpuLoad_ = cpuLoad;
+    }
+    else if(cpuLoad > maxCpuLoad_)
+        maxCpuLoad_ = cpuLoad;
 
+    ++ cntCycles_;
+
+    return 0;
+    
 } /* End of bsw_taskUser1000ms */

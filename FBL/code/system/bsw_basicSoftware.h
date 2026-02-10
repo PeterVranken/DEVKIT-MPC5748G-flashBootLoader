@@ -81,6 +81,7 @@
 /** The IDs of the processes, which can be used by the application. */
 typedef enum bsw_pid_t
 {
+    bsw_pidOS = 0,      /** Kernel and operating system. */
     bsw_pidUser = 1,    /** Intented for user code and C libraries. */
     bsw_pidSafety = 2,  /** Intented for safety assured supervisory code. */
 
@@ -111,6 +112,25 @@ typedef struct bsw_rxCanMessage_t
 /*
  * Global data declarations
  */
+
+/* The average CPU load produced by all tasks and interrupts in tens of percent. Can be
+   read at any time by any context on any core. */
+extern volatile unsigned int UNCACHED_OS(bsw_cpuLoad);
+
+/* The current stack reserve of the operating system process (bsw_pidOS). Unit is Byte.
+   The value is updated about once every 1.5s and can be read at any time by any context
+   on core #BSW_IDX_MAIN_CORE. */
+extern volatile uint16_t BSS_OS(bsw_stackReserveProcessOS);
+
+/* The current stack reserve of the QM process (APSW, bsw_pidAPSW). Unit is Byte. The
+   value is updated about once every 1.5s and can be read at any time by any context on
+   core #BSW_IDX_MAIN_CORE. */
+extern volatile uint16_t BSS_OS(bsw_stackReserveProcessAPSW);
+
+/* The current stack reserve of the safety process (bsw_pidSafety). Unit is Byte. The
+   value is updated about once every 1.5s and can be read at any time by any context on
+   core #BSW_IDX_MAIN_CORE. */
+extern volatile uint16_t BSS_OS(bsw_stackReserveProcessSafety);
 
 
 /*

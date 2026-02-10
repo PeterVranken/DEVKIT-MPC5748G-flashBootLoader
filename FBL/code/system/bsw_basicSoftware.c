@@ -153,8 +153,22 @@ _Static_assert(BSW_PRIO_USER_TASK_10MS == prioEv10ms, "Inconsistency in public i
 
 /** The average CPU load produced by all tasks and interrupts in tens of percent. Can be
     read at any time by any context on any core. */
-unsigned int UNCACHED_OS(bsw_cpuLoad) = 1000;
+volatile unsigned int UNCACHED_OS(bsw_cpuLoad) = 1000;
 
+/** The current stack reserve of the operating system process (bsw_pidOS). Unit is Byte.
+    The value is updated about once every 1.5s and can be read at any time by any context
+    on core #BSW_IDX_MAIN_CORE. */
+volatile uint16_t BSS_OS(bsw_stackReserveProcessOS) = 0u;
+
+/** The current stack reserve of the QM process (APSW, bsw_pidAPSW). Unit is Byte. The
+    value is updated about once every 1.5s and can be read at any time by any context on
+    core #BSW_IDX_MAIN_CORE. */
+volatile uint16_t BSS_OS(bsw_stackReserveProcessAPSW) = 0u;
+
+/** The current stack reserve of the safety process (bsw_pidSafety). Unit is Byte. The
+    value is updated about once every 1.5s and can be read at any time by any context on
+    core #BSW_IDX_MAIN_CORE. */
+volatile uint16_t BSS_OS(bsw_stackReserveProcessSafety) = 0u;
 
 /*
  * Function implementation
@@ -536,9 +550,15 @@ int /* _Noreturn */ main(int noArgs ATTRIB_DBG_ONLY, const char *argAry[] ATTRIB
     }
 
     /* The code down here becomes the idle task of the RTOS. We enter an infinite loop,
-       where some background can be placed. */
+       where some background code can be placed. */
     while(true)
     {
+        /* Regularly re-calculate the current stack reserve, i.e., the number of not yet
+           used stack bytes. Each process has its own stack. */
+        bsw_stackReserveProcessOS     = rtos_getStackReserve(bsw_pidOS);
+        bsw_stackReserveProcessAPSW   = rtos_getStackReserve(bsw_pidUser);
+        bsw_stackReserveProcessSafety = rtos_getStackReserve(bsw_pidSafety);
+        
         /* Compute the average CPU load. Note, this operation lasts about 1s and has a
            significant impact on the cycling speed of this infinite loop. Furthermore, it
            measures only the load produced by the tasks and system interrupts but not that
