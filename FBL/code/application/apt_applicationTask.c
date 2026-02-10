@@ -57,13 +57,16 @@
 #include "bsw_basicSoftware.h"
 #include "f2d_float2Double.h"
 #include "sio_serialIO.h"
+#include "rtos.h"
+#include "stricmp.h"
+#include "rom_flashRomDriver.h"
 
 /*
  * Defines
  */
 
 /** Software version */
-#define VERSION "0.2.0"
+#define VERSION "0.5.0"
 
 /** Floating point random number with more than 15 Bit resolution; taken fron
     http://www.azillionmonkeys.com/qed/random.html on Jan 23, 2017.
@@ -106,8 +109,15 @@ volatile static unsigned int DATA_P1(_cntTask1ms) = 0;
 /** Simple counter of 10ms application task invokations. Used for timing operations. */
 volatile static unsigned int DATA_P1(_cntTask10ms) = 0;
 
-/** Switch to enable/disable the continuous display of PWM measurement results. */
-volatile static bool SBSS_P1(_enableDisplayPWM) = false;
+/** World time: The sum of this variable (unit 1ms) and \a _cntTask1ms (unit 1ms) is the
+    world time, represented as number of Milliseconds since beginning of the day. */
+static typeof(_cntTask1ms) DATA_P1(_offsetInS) = 0;
+
+/** Status information time output: Counter until next time printing. */
+static uint16_t DATA_P1(_cntPrintTime) = 0u;
+
+/** Status information time output: Period of time printing. */
+static uint16_t DATA_P1(_tiCycleTimeInS) = 0u;
 
 /*
  * Function implementation
@@ -297,6 +307,12 @@ static void help()
     "Type:\r\n"
     "help: Get this help text\r\n"
     "show c, show w: Show details of software license\r\n"
+    "show stack: Print once the current stack reserve of all processes\r\n"
+    "show errors: Print once the total number of process errors recorded in the kernel\r\n"
+    "show time [tiCycleInS]: Enable/disable regular display of current time\r\n"
+#if ROM_TEST_BUILD_WITH_ERROR_INJECTION == 1
+    "error: Inject an error in the current flash ROM task. For testing only\r\n"
+#endif
     "version: Print software version designation\r\n"
     "time: Print current time\r\n"
     "time hour min [sec]: Set current time\r\n";
@@ -335,6 +351,52 @@ int32_t bsw_taskUserInit(uint32_t PID ATTRIB_DBG_ONLY)
 } /* End of bsw_taskUserInit */
 
 
+
+
+/**
+ * Format the current time in printable format.
+ *   @param msgTime
+ * The time is written into this character string. It has room for \a sizeOfMsgTime
+ * characters, which includes the terminating zero byte.
+ *   @param sizeOfMsgTime
+ * A value of 9 is suffcient to hold any possible time designation.
+ */
+void apt_printCurrTime(char msgTime[], unsigned int sizeOfMsgTime)
+{
+    /* Current time in seconds since beginning of day. */
+    const unsigned int noMillis = _cntTask1ms;
+    unsigned int noSec = noMillis / 1000u + _offsetInS;
+
+    /* Avoid expensive modulo. */
+    if(noSec >= 86400u)
+    {
+        noSec -= 86400u;
+        _offsetInS -= 86400u;
+    }
+    assert(noSec < 86400u);
+
+    /* Split current time in hour, minute and second of day. */
+    unsigned int h, m, s;
+    h = noSec / 3600u;
+    m = s = noSec - h*3600u;
+    m /= 60u;
+    s -= m*60u;
+
+    snprintf(msgTime, sizeOfMsgTime, "%02u:%02u:%02u", h, m, s);
+
+} /* apt_printCurrTime */
+
+
+/**
+ * Print the current time.
+ */
+static void printCurrTime(void)
+{
+    char msgTime[9];
+    apt_printCurrTime(msgTime, sizeof(msgTime));
+    iprintf("Current time is %s\r\n", msgTime);
+
+} /* printCurrTime */
 
 
 /**
@@ -382,6 +444,15 @@ int32_t bsw_taskUser10ms(uint32_t PID ATTRIB_DBG_ONLY, uint32_t taskParam ATTRIB
 
     ++ _cntTask10ms;
     
+    if(_cntPrintTime > 0u)
+    {
+        if(--_cntPrintTime == 0u)
+        {
+            printCurrTime();
+            _cntPrintTime = _tiCycleTimeInS;
+        }
+    }
+
     /* Look for possible user input through serial interface. */
     static unsigned int DATA_P1(cntIdleLoops_) = 2800;
     char inputMsg[80+1];
@@ -393,20 +464,75 @@ int32_t bsw_taskUser10ms(uint32_t PID ATTRIB_DBG_ONLY, uint32_t taskParam ATTRIB
         bool didNotUnderstand = false;
         if(argC >= 1)
         {
-            if(strcmp(argV[0], "show") == 0  &&  argC >= 2)
+            if(stricmp(argV[0], "show") == 0  &&  argC >= 2)
             {
-                if(strcmp(argV[1], "c") == 0)
+                if(stricmp(argV[1], "c") == 0)
                     showC();
-                else if(strcmp(argV[1], "w") == 0)
+                else if(stricmp(argV[1], "w") == 0)
                     showW();
+                else if(stricmp(argV[1], "stack") == 0)
+                {
+                    /* Report the stack sizes now and once. */
+                    // TODO We need proper export of the process IDs by the BSW.
+                    iprintf( "Stack reserve in Byte:\r\n"
+                             "  Operating system:  %hu\r\n"
+                             "  APSW (QM process): %hu\r\n"
+                             "  Safety process:    %hu\r\n"
+                           , rtos_getStackReserve(/*pidOS*/     0u)
+                           , rtos_getStackReserve(/*pidAPSW*/   1u)
+                           , rtos_getStackReserve(/*pidSafety*/ 2u)
+                           );
+                }
+                else if(stricmp(argV[1], "errors") == 0)
+                {
+                    /* Report the event losses, which mostly means task overruns. */
+                    // TODO We need proper export of the process and event IDs by the BSW.
+                    iprintf( "Event losses:\r\n"
+                             "  Tasks 1ms:   %u\r\n"
+                             "  Tasks 10ms:  %u\r\n"
+                             "  Tasks 100ms: %u\r\n"
+                             "  Tasks 1s:    %u\r\n"
+                             "  Task CCP:    %u\r\n"
+                           , rtos_getNoActivationLoss(0u)
+                           , rtos_getNoActivationLoss(1u)
+                           , rtos_getNoActivationLoss(2u)
+                           , rtos_getNoActivationLoss(3u)
+                           , rtos_getNoActivationLoss(4u)
+                           );
+
+                    /* Report process errors. */
+                    iprintf( "Exceptions:\r\n"
+                             "  QM (APSW) process:   %u\r\n"
+                             "  Safety process:      %u\r\n"
+                           , rtos_getNoTotalTaskFailure(/*pidAPSW*/   1u)
+                           , rtos_getNoTotalTaskFailure(/*pidSafety*/ 2u)
+                           );
+                }
+                else if(strcmp(argV[1], "time") == 0)
+                {
+                    /* Regular output of the current time: Omitted argument means "on",
+                       value 0 (including non-numbers) means "off". */
+                    const signed int tiCycleInS = argC == 2u? 1: atoi(argV[2]);
+                    if(tiCycleInS < 0)
+                        _tiCycleTimeInS = 0u;
+                    else if(100*tiCycleInS <= UINT16_MAX)
+                        _tiCycleTimeInS = (uint16_t)(100*tiCycleInS);
+                else
+                        _tiCycleTimeInS = 65500u;
+
+                    _cntPrintTime = _tiCycleTimeInS > 0u? 1u: 0u;
+                }
             }
-            else if(strcmp(argV[0], "help") == 0)
+            else if(stricmp(argV[0], "help") == 0)
                 help();
-            else if(strcmp(argV[0], "version") == 0)
+            else if(stricmp(argV[0], "version") == 0)
                 version();
-            else if(strcmp(argV[0], "time") == 0)
+#if ROM_TEST_BUILD_WITH_ERROR_INJECTION == 1
+            else if(stricmp(argV[0], "error") == 0)
+                rom_lastError = rom_err_invalidErrorCode;
+#endif
+            else if(stricmp(argV[0], "time") == 0)
             {
-                static unsigned int DATA_P1(_offsetInS) = 0;
                 if(argC >= 3)
                 {
                     signed int i = atoi(argV[1]);
@@ -415,14 +541,14 @@ int32_t bsw_taskUser10ms(uint32_t PID ATTRIB_DBG_ONLY, uint32_t taskParam ATTRIB
                     else if(i >= 24)
                         i = 23;
                     _offsetInS = (unsigned)i * 3600u;
-                    
+
                     i = atoi(argV[2]);
                     if(i < 0)
                         i = 0;
                     else if(i >= 60)
                         i = 59;
                     _offsetInS += (unsigned)i * 60u;
-                    
+
                     /* Designation of seconds is an option only. */
                     if(argC >= 4)
                     {
@@ -434,32 +560,13 @@ int32_t bsw_taskUser10ms(uint32_t PID ATTRIB_DBG_ONLY, uint32_t taskParam ATTRIB
                         _offsetInS += (unsigned)i;
                     }
                     assert(_offsetInS < 86400);
-                    
+
                     /* Consider current system, which we don't want to reset. */
                     _offsetInS -= _cntTask1ms / 1000;
                 }
-                
-                /* Print current time. */
-                const unsigned int noMillis = _cntTask1ms;
-                unsigned int noSec = noMillis / 1000 + _offsetInS;
 
-                /* Avoid expensive modulo. */
-                if(noSec >= 86400)
-                {
-                    noSec -= 86400;
-                    _offsetInS -= 86400;
-                }
-                assert(noSec < 86400);
-
-                unsigned int h, m, s;
-                h = noSec / 3600;
-                m = s = noSec - h*3600;
-                m /= 60;
-                s -= m*60;
-
-                iprintf( "Current time is %02u:%02u:%02u\r\n"
-                       , h, m, s
-                       );
+                printCurrTime();
+                _cntPrintTime = _tiCycleTimeInS;
             }
             else
             {

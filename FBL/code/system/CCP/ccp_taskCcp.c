@@ -91,7 +91,7 @@
 
 /** The maximum wait time for completion of an erase command in the flash ROM driver. This
     timeout should be in the magnitude of 10s. */
-#define CCP_TI_MAX_WAIT_FLASH_DRV_ERASE_IN_MS       20000u
+#define CCP_TI_MAX_WAIT_FLASH_DRV_ERASE_IN_MS       25000u
 
 /** The session timeout. The session is silently closed, if the client didn't send any CRO
     command this long. */
@@ -129,6 +129,7 @@ enum ccpCmd_t
 enum ccpCmdResponseCode_t
 {
     ccpCmdRespCode_noError = 0x00u,
+    ccpCmdRespCode_unknownCommand = 0x30,
     ccpCmdRespCode_paramOutOfRange = 0x32u,
     ccpCmdRespCode_overload = 0x34u,
 };
@@ -298,17 +299,18 @@ bool ccp_osInitCcpTask(void)
  *   @return
  * The function returns \a true if it recognizes the message as CCP related.
  *   @param[out] pMsgConsumed
- * The function returns by reference the Boolean information whether or not is could
- * consume the CCP message. Get \a true if the function returns \a true but it couldn't
- * process the message due to an internal buffer overrun event. For non CCP messages thie
- * value will always be returned as \a false.\n
- *   Most of the time, a value of \a false points to a protocol error and will terminate the
- * CCP session.
+ * The function returns by reference the Boolean information whether or not it could
+ * consume the CCP message.\n
+ *   * \a pMsgConsumed is set to \a false, if the function returns \a true but it couldn't
+ * process the message due to an internal buffer overrun event. Most of the time, this
+ * points to a protocol error and will terminate the CCP session.\n
+ *   For non CCP messages, when the function returns \a false, * \a pMsgConsumed will
+ * always be returned as \a false.
  *   @param[in] pRxCanMsg
  * The message to check by reference.
  *   @remark
  * This function is expected to be called from a CAN interrupt, thus asynchronously to the
- * rest of the code, i.e., the implementation of the CCP state machine in its own task.
+ * rest of the code, i.e., to the implementation of the CCP state machine in its own task.
  */
 bool ccp_osFilterForCcpMsg( bool * const pMsgConsumed
                           , const bsw_rxCanMessage_t * const pRxCanMsg
@@ -509,6 +511,11 @@ static void finishDisconnect(void)
     /* As the flash ROM driver is free after completion of all pending activities we may
        return the DTO. */
        
+    /* We still check for a pending fault in the flash ROM driver. (Resulting from an
+       earlier command.) We still need to return this information to the CCP client. We do
+       this by negative response code. */
+    const bool hasDrvFault = rom_osFetchLastError() != rom_err_noError;
+    
     /* Since CCP can't have two sessions with two different ECUs open at a time, the station
        address in the command needs to be ours - otherwise we see a protocol error. The
        reaction is the same in both cases; we close the session. Only the returned response
@@ -519,7 +526,7 @@ static void finishDisconnect(void)
     const unsigned int stationAddr = ((unsigned)_ccpFsm.croMsg.payload[5] << 8)
                                      + _ccpFsm.croMsg.payload[4];
     unsigned int reponseCode;
-    if(isEndOfSession && stationAddr == CCP_STATION_ADDR)
+    if(isEndOfSession && stationAddr == CCP_STATION_ADDR && !hasDrvFault)
         reponseCode = ccpCmdRespCode_noError;
     else
         reponseCode = ccpCmdRespCode_paramOutOfRange;
@@ -614,7 +621,13 @@ static void finishUpload(void)
     assert(_ccpFsm.noBytesToProcess <= 5);
     memcpy(&_ccpFsm.dtoMsg.payload[3], (const void*)_ccpFsm.mta0, _ccpFsm.noBytesToProcess);
     _ccpFsm.mta0 += _ccpFsm.noBytesToProcess;
-    finalizeDtoMsg(ccpCmdRespCode_noError);
+    
+    /* We still check for a pending fault in the flash ROM driver. (Resulting from an
+       earlier command.) We still need to return this information to the CCP client. We do
+       this by negative response code. */
+    finalizeDtoMsg(rom_osFetchLastError() == rom_err_noError? ccpCmdRespCode_noError
+                                                            : ccpCmdRespCode_paramOutOfRange
+                  );
     _ccpFsm.state = ccp_stateFsm_connected;
 
 } /* finishUpload */
@@ -664,8 +677,13 @@ static void onUpload(void)
 static void submitClearMemory(void)
 {
     /* As the flash driver is free we submit the erase command immediately and wait in
-       another state for its completion. */
-    if(rom_osStartEraseFlashMemory(_ccpFsm.mta0, _ccpFsm.noBytesToProcess))
+       another state for its completion.
+         However, before we submit the erase command, we check for a pending fault in the
+       flash ROM driver. (Resulting from an earlier command.) We still need to return this
+       information to the CCP client. We do this by rejecting the new command. */
+    if(rom_osFetchLastError() == rom_err_noError
+       && rom_osStartEraseFlashMemory(_ccpFsm.mta0, _ccpFsm.noBytesToProcess)
+      )
     {
         #if VERBOSE >= 1
         iprintf( "Now clearing %lu Bytes at 0x%08lX.\r\n"
@@ -678,8 +696,8 @@ static void submitClearMemory(void)
     }
     else
     {
-        /* The flash driver doesn't accept the command. */
-        // TODO Check if this is an assertion; we had beforehand checked busy and the address range
+        /* Either the flash driver doesn't accept the command or an error had happened in
+           the (asynchronusly executed) preceding command. */
         _ccpFsm.state = ccp_stateFsm_connected;
         finalizeDtoMsg(ccpCmdRespCode_paramOutOfRange);
     }
@@ -743,9 +761,14 @@ static void submitProgram(void)
 {
     /* As the flash driver is free we submit the program command immediately and return the
        DTO. The actual programming is running asynchronously from now on in the flash
-       driver. */
+       driver.
+         However, before we submit the next program command, we check for a pending fault
+       in the flash ROM driver. (Resulting from an earlier command.) We still need to
+       return this information to the CCP client. We do this by rejecting the new command. */
     enum ccpCmdResponseCode_t reponseCode;
-    if(rom_osStartProgram(_ccpFsm.mta0, _ccpFsm.pDataToProgram, _ccpFsm.noBytesToProcess))
+    if(rom_osFetchLastError() == rom_err_noError
+       && rom_osStartProgram(_ccpFsm.mta0, _ccpFsm.pDataToProgram, _ccpFsm.noBytesToProcess)
+      )
     {
         #if VERBOSE >= 3
         iprintf( "Now programming %lu Bytes at 0x%08lX.\r\n"
@@ -754,7 +777,7 @@ static void submitProgram(void)
                );
         #endif
 
-        /* The MTA is updated and the new value echoes in the response message. */
+        /* The MTA is updated and the new value echoed in the response message. */
         _ccpFsm.mta0 += _ccpFsm.noBytesToProcess;
         writeMta0IntoDto();
 
@@ -762,8 +785,8 @@ static void submitProgram(void)
     }
     else
     {
-        /* The flash driver doesn't accept the command. */
-        // TODO Check if this is an assertion; we had beforehand checked busy and the address range
+        /* Either the flash driver doesn't accept the command or an error had happened in
+           the (asynchronusly executed) preceding command. */
         reponseCode = ccpCmdRespCode_paramOutOfRange;
     }
 
@@ -774,7 +797,7 @@ static void submitProgram(void)
 
 
 /**
- * The reaction on a received CCP PROGRAM command.\n
+ * The reaction on a received CCP PROGRAM or PROGRAM_6 command.\n
  *   The command is executed asynchronously with respect to the CCP protocol flow. The CCP
  * client will receive the DTO after successful submission of the command at the flash
  * driver, which only means that command and data have been buffered in the driver. This
@@ -858,6 +881,13 @@ static void onRxCroMsg(void)
                 #endif
                 _ccpFsm.state = ccp_stateFsm_connected;
                 finalizeDtoMsg(ccpCmdRespCode_noError);
+                
+                /* If there still is a pending fault of the flash ROM driver (from an
+                   earlier session) then we ignore it silently. This situation may happen,
+                   if a fault situation let to abortion of the last session. (If it were
+                   properly closed then the fault had already been reported latest in the
+                   DISCONNECT command.) */
+                rom_osFetchLastError();
             }
             else
             {
@@ -911,11 +941,10 @@ static void onRxCroMsg(void)
             break;
 
         default:
-            // TODO Shall we abort the session? Likely yes, protocol error
             #if VERBOSE >= 2
             iprintf("Unsupported CCP CRO command %u received.\r\n", _ccpFsm.croMsg.payload[0]);
             #endif
-            discardCro();
+            finalizeDtoMsg(ccpCmdRespCode_unknownCommand);
             setTimeout(CCP_TI_MAX_SESSION_IDLE_IN_MS);
         }
         break;
@@ -1144,11 +1173,6 @@ void ccp_taskOsRxCcp(uint32_t taskParam)
 
     static uint32_t SDATA_OS(cnt1ms_) = 0u;
     cnt1ms_ += noTimerTicks1ms;
-
-#if VERBOSE >= 1
-    if((cnt1ms_ % 10000u) == 0u)
-        iprintf("CCP task %lus up and running\r\n", cnt1ms_/1000u);
-#endif
 
     /* Serve the CCP protocol for download of data and flashing only when the task was
        triggered by CAN Rx event(s). */

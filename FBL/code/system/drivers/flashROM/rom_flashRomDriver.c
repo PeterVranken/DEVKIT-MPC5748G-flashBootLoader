@@ -26,8 +26,10 @@
  *   rom_osReadyToStartProgram
  *   rom_osStartProgram
  *   rom_osFlushProgramDataBuffer
+ *   rom_osFetchLastError
  *   rom_osFlashRomDriverMain
  * Local functions
+ *   latchLastError
  */
 
 /*
@@ -91,9 +93,42 @@ static bool BSS_OS(_isBusyErasing) = false;
     function will handle the flag. */
 static bool SBSS_OS(_flushPgmInputBuf) = false;
 
+/** Last error code received from underlaying flash ROM driver. Due to the asynchronous
+    operation of HW and SW, this error code will be returned to the client code only with a
+    delay of one action. */
+#if ROM_TEST_BUILD_WITH_ERROR_INJECTION == 1
+# warning Test build: Flash ROM driver owned variable rom_lastError is exposed to access by P1
+rom_errorCode_t DATA_P1(rom_lastError) = rom_err_invalidErrorCode;
+#else
+static rom_errorCode_t DATA_OS(rom_lastError) = rom_err_invalidErrorCode;
+#endif
+
 /*
  * Function implementation
  */
+
+/**
+ * Store last error.\n
+ *   This function should be called with the return value of the flash ROM driver API
+ * calls. If the return value points to a problem then it is stored. The client code of the
+ * flash ROM driver can query potentialls stored errors using rom_osFetchLastError().\n
+ *   This way of reporting errors is required as in the flash ROM driver the HW operates
+ * asynchronous to the SW API. The API calls can't directly and immediately return the
+ * error codes.
+ *   @param[in] apiReturnCode
+ * The return code from an API call of the driver core (i.e., eap_xxx()), which is checked
+ * for a fault status and stored in case.
+ */
+static void latchLastError(rom_errorCode_t apiReturnCode)
+{
+    /* All codes but noError and pending are reported error and they are stored if there is
+       no other error stored yet. We don't overwrite an already stored error as it is
+       probable that later errors are just a consequence of earlier ones. */
+    if(rom_lastError == rom_err_noError  &&  apiReturnCode != rom_err_processPending)
+        rom_lastError = apiReturnCode;
+
+} /* latchLastError */
+
 
 /**
  * Initialize the complete flash driver, including the sub-ordinated modules eap and dib.
@@ -102,11 +137,12 @@ void rom_osInitFlashRomDriver(void)
 {
     dib_osInitBufferManagement();
     eap_osInitFlashRomDriver();
-    
+
     _isBusyErasing = false;
     _pPgmInputBuf = NULL;
     _pPgmBuf = NULL;
     _flushPgmInputBuf = false;
+    rom_lastError = rom_err_noError;
 
 } /* rom_osInitFlashRomDriver */
 
@@ -192,15 +228,27 @@ bool rom_osReadyToStartErase(void)
  */
 bool rom_osStartEraseFlashMemory(uint32_t address, uint32_t noBytes)
 {
-    if(rom_osReadyToStartErase() && rom_isValidFlashAddressRange(address, noBytes))
+    bool success = true;
+    rom_errorCode_t errCode = rom_err_noError;
+    
+    if(success && !rom_isValidFlashAddressRange(address, noBytes))
     {
-        /* End address: Overflow protection sits in rom_isValidFlashAddressRange(). */
-        _isBusyErasing = eap_osStartEraseFlashBlocks(address, noBytes) 
-                         == rom_err_processPending;
-        return _isBusyErasing;
+        success = false;
+        errCode = rom_err_badAddressRange;
     }
-    else
-        return false;
+    if(success && !rom_osReadyToStartErase())
+    {
+        success = false;
+        errCode = rom_err_driverNotReady;
+    }
+    if(success)
+    {
+        errCode = eap_osStartEraseFlashBlocks(address, noBytes);
+        success = _isBusyErasing = errCode == rom_err_processPending;
+    }
+
+    latchLastError(errCode);
+    return success;
 
 } /* rom_osStartEraseFlashMemory */
 
@@ -298,7 +346,7 @@ bool rom_osStartProgram(uint32_t address, const uint8_t *pDataToProgram, uint32_
                                      , noBytes - noBytesWritten
                                      , pDataToProgram + noBytesWritten
                                      );
-            
+
             /* The function is specified to allow at maximum EAP_C55FMC_SIZE_OF_QUAD_PAGE+1
                bytes to write at once. If this assertion fires then this pre-condition of
                the function call has been violated in a harmful, data loss-causing way.
@@ -353,9 +401,30 @@ void rom_osFlushProgramDataBuffer(void)
 
 
 /**
+ * Get the last recently seen error in the flash ROM driver.\n
+ *   In the flash ROM driver, the HW operates asynchronous to the public API. Therefore,
+ * the public API calls can't directly and immediately return the error codes to the client
+ * code. Instead, it'll regularly use this API to check if an error had been happened in
+ * the meantime.\n
+ *   Calling this API resets a stored error by side-effect. A second call won't return the
+ * error again.
+ *   @return
+ * Get the last recently occured error or \a rom_err_noError, if no error happened since
+ * the last call of this API.
+ */
+rom_errorCode_t rom_osFetchLastError(void)
+{
+    const rom_errorCode_t errCode = rom_lastError;
+    rom_lastError = rom_err_noError;
+    return errCode;
+
+} /* rom_osFetchLastError */
+
+
+/**
  * Main function of flash ROM driver. To be called regularly in order to keep the main
  * state machine running.
- */ 
+ */
 void rom_osFlashRomDriverMain(void)
 {
     /* If client code had requested to program the half-way filled input buffer then push it
@@ -366,13 +435,14 @@ void rom_osFlashRomDriverMain(void)
         _pPgmInputBuf = NULL;
         _flushPgmInputBuf = false;
     }
-    
+
     if(_isBusyErasing)
     {
         /* rom_osStartEraseFlashMemory() had initiated an erase command. Now, we have to
            check the underlying driver, if the operation has completed. */
-        // TODO Return programming error back (to next start request).
-        _isBusyErasing = eap_osGetStatusEraseFlashBlocks() == rom_err_processPending;
+        const rom_errorCode_t errCode = eap_osGetStatusEraseFlashBlocks();
+        latchLastError(errCode);
+        _isBusyErasing = errCode == rom_err_processPending;
     }
     else
     {
@@ -380,10 +450,11 @@ void rom_osFlashRomDriverMain(void)
            programming of the quad-page has completed. */
         if(_pPgmBuf != NULL)
         {
-            if(eap_osGetStatusProgramQuadPage() != rom_err_processPending)
+            const rom_errorCode_t errCode = eap_osGetStatusProgramQuadPage();
+            latchLastError(errCode);
+            if(errCode != rom_err_processPending)
             {
                 dib_osReleaseBuffer(_pPgmBuf, /*submitForProgramming*/ false);
-                // TODO Return programming error back (to next start request).
                 _pPgmBuf = NULL;
             }
         }
@@ -393,16 +464,17 @@ void rom_osFlashRomDriverMain(void)
              Note, it is most important for the state machine that this happens still in
            the same invocation of main. As long as there are filled input buffers, _pPgmBuf
            must not become NULL outside this function call. So it's not an else of the
-           previous if. */
+           preceding if. */
         while(_pPgmBuf == NULL)
         {
             /* Check for potential new flash jobs. */
             dib_pageProgramBuffer_t * const pPgmBuf = dib_osAcquireProgramBuffer();
             if(pPgmBuf != NULL)
             {
-                if(eap_osStartProgramQuadPage(dib_getBufferPayload(pPgmBuf))
-                   == rom_err_processPending
-                  )
+                const rom_errorCode_t errCode = eap_osStartProgramQuadPage
+                                                            (dib_getBufferPayload(pPgmBuf));
+                latchLastError(errCode);
+                if(errCode == rom_err_processPending)
                 {
                     /* We got a filled buffer and could hand it over to the driver for
                        programming. Done. */
@@ -412,7 +484,6 @@ void rom_osFlashRomDriverMain(void)
                 {
                     /* We got a filled buffer but the driver can't process it. It is
                        dropped and an error will be reported to the client code. */
-                    // TODO Return programming error back (to next start request).
                     dib_osReleaseBuffer(pPgmBuf, /*submitForProgramming*/ false);
                 }
             }
@@ -423,162 +494,7 @@ void rom_osFlashRomDriverMain(void)
                 break;
             }
         } /* while(We are idle and the pool may contain another filled input buffer.) */
-        
-    } /* if(Waiting for an erase command to complete?) */    
-    
+
+    } /* if(Waiting for an erase command to complete?) */
+
 } /* rom_osFlashRomDriverMain */
-    
-
-// This code could still be valid for testing state machine without actually flashing
-//    /* Emulation of programming. */
-//    #define DELAY_PER_ROW   20u
-//    static unsigned int SDATA_OS(noBytesLeft_);
-//    static uint32_t SDATA_OS(wrAddr_);
-//    static const uint8_t * SDATA_OS(pData_);
-//    static unsigned int SDATA_OS(cntDelay_);
-//
-//    if(_pPgmBuf == NULL)
-//    {
-//        /* Check for potential new flash jobs. */
-//        _pPgmBuf = dib_osAcquireProgramBuffer();
-//
-//        if(_pPgmBuf != NULL)
-//        {
-//            eap_quadPageProgramBuffer_t * const pPageBuf = dib_getBufferPayload(_pPgmBuf);
-//            noBytesLeft_ = EAP_C55FMC_SIZE_OF_QUAD_PAGE;
-//            wrAddr_ = pPageBuf->address;
-//            pData_ = &pPageBuf->data_b[0];
-//            cntDelay_ = DELAY_PER_ROW;
-//        }
-//    }
-//    if(_pPgmBuf != NULL)
-//    {
-//#if 0 /* This path: Emulate a programming, which is slower than data transmission and which
-//         slows down the CCP communication. */
-//
-//        if(cntDelay_ > 0u)
-//        {
-//            -- cntDelay_;
-//        }
-//        else if(noBytesLeft_ > 0u)
-//        {
-//            iprintf( "P: %06lX  %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X\r\n"
-//                   , wrAddr_
-//                   , (unsigned)pData_[ 0]
-//                   , (unsigned)pData_[ 1]
-//                   , (unsigned)pData_[ 2]
-//                   , (unsigned)pData_[ 3]
-//                   , (unsigned)pData_[ 4]
-//                   , (unsigned)pData_[ 5]
-//                   , (unsigned)pData_[ 6]
-//                   , (unsigned)pData_[ 7]
-//                   , (unsigned)pData_[ 8]
-//                   , (unsigned)pData_[ 9]
-//                   , (unsigned)pData_[10]
-//                   , (unsigned)pData_[11]
-//                   , (unsigned)pData_[12]
-//                   , (unsigned)pData_[13]
-//                   , (unsigned)pData_[14]
-//                   , (unsigned)pData_[15]
-//                   );
-//            wrAddr_ += 16u;
-//            pData_ += 16u;
-//            noBytesLeft_ -= 16;
-//
-//            if(noBytesLeft_ > 0u)
-//                cntDelay_ = DELAY_PER_ROW;
-//        }
-//        else
-//        {
-//            dib_osReleaseBuffer(_pPgmBuf, /*submitForProgramming*/ false);
-//            _pPgmBuf = NULL;
-//        }
-//        
-//#else /* This path: Emulate programming in realistic speed. Measurements show a programming
-//         time of 0.3ms per quad-page: We will be ready already in the next 1ms-clock-tick.
-//         CCP communication limits the speed, not programming. */
-//        dib_osReleaseBuffer(_pPgmBuf, /*submitForProgramming*/ false);
-//        _pPgmBuf = NULL;
-//#endif
-//    }
-
-
-///** Return true if state machine requires continued calling for completing the process. */
-//bool eap_firstTest(bool start)
-//{
-//    static enum {idle, init, error, waitForErase, program, success, } state_ SECTION(.sdata.OS.var) = idle;
-//
-//    if(start)
-//    {
-//        assert(state_ == idle  ||  state_ == success);
-//        state_ = init;
-//    }
-//    else
-//        assert(state_ == waitForErase  ||  state_ == program);
-//
-//    if(state_ == init)
-//    {
-//        eap_cntFsm = 0u;
-//        eap_prgDataBuf.address = 0xFC0100u;
-//        static uint8_t SDATA_OS(startVal_) = 1u;
-//        for(unsigned int u=0u; u<EAP_C55FMC_SIZE_OF_QUAD_PAGE; ++u)
-//            eap_prgDataBuf.data_b[u] = (startVal_ + u) & 0xFFu;
-//        ++ startVal_;
-//
-//        eap_resultStartErase = eap_osStartEraseFlashBlocks( eap_prgDataBuf.address
-//                                                          , EAP_C55FMC_SIZE_OF_QUAD_PAGE
-//                                                          );
-//        if(eap_resultStartErase == rom_err_processPending)
-//        {
-//            eap_noWaitCyclesErase = 0u;
-//            state_ = waitForErase;
-//        }
-//        else
-//            state_ = error;
-//    }
-//    else if(state_ == waitForErase)
-//    {
-//        ++ eap_noWaitCyclesErase;
-//        eap_resultGetStatusErase = eap_osGetStatusEraseFlashBlocks();
-//
-//        if(eap_resultGetStatusErase == rom_err_noError)
-//            state_ = program;
-//        else if(eap_resultGetStatusErase != rom_err_processPending)
-//            state_ = error;
-//    }
-//    else if(state_ == program)
-//    {
-//        eap_tiPgmQuadPageIn12p5ns = stm_osGetSystemTime(/*idxTimer*/ 0u);
-//        eap_resultStartPgm = eap_osStartProgramQuadPage(&eap_prgDataBuf);
-//
-//        if(eap_resultStartPgm == rom_err_processPending)
-//        {
-//            eap_noWaitCyclesPgm = 0u;
-//            while(true)
-//            {
-//                eap_resultGetStatusPgm = eap_osGetStatusProgramQuadPage();
-//                if(eap_resultGetStatusPgm == rom_err_processPending)
-//                    ++ eap_noWaitCyclesPgm;
-//                else
-//                {
-//                    if(eap_resultGetStatusPgm == rom_err_noError)
-//                        state_ = success;
-//                    else
-//                        state_ = error;
-//
-//                    break;
-//                }
-//            }
-//            eap_tiPgmQuadPageIn12p5ns = stm_osGetSystemTime(/*idxTimer*/ 0u)
-//                                        - eap_tiPgmQuadPageIn12p5ns;
-//        }
-//        else
-//        {
-//            state_ = error;
-//            eap_tiPgmQuadPageIn12p5ns = stm_osGetSystemTime(/*idxTimer*/ 0u)
-//                                        - eap_tiPgmQuadPageIn12p5ns;
-//        }
-//    }
-//
-//    return state_ != error  &&  state_ != success;
-//}

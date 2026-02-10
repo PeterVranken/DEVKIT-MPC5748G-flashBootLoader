@@ -27,6 +27,8 @@
 #include <stdint.h>
 #include <stdbool.h>
 
+#include "typ_types.h"
+
 /** @todo Define either MCU_MPC5748G, MCU_MPC5775B or MCU_MPC5775E to select the MCU, which
     this module is compiled for. */
 #define MCU_MPC5748G
@@ -35,6 +37,14 @@
  * Defines
  */
 
+/* Only for testing purpose, it is allowed to modify the global error variable from the
+   user command line interface in the QM process. Never set this flag to 1 in a production
+   build! */
+#ifdef DEBUG
+# define ROM_TEST_BUILD_WITH_ERROR_INJECTION 1
+#else
+# define ROM_TEST_BUILD_WITH_ERROR_INJECTION 0
+#endif
 
 /*
  * Global type definitions
@@ -43,14 +53,15 @@
 /** Error and status codes of the public API of the flash ROM driver. */
 typedef enum 
 {
-    rom_err_noError,            /**< Operation succeeded without an error. */
-    rom_err_badAddressRange,    /**< Operation rejected due to bad/invalid addresses. */
-    rom_err_quadPageNotBlank,   /**< Attempt to program a non-erased quad-page. */
-    rom_err_processPending,     /**< Operation successfully initiated, is still ongoing. */
-    rom_err_c55FmcErrorInPeg,   /**< C55FMC reported an error during flash array programming.*/
-    rom_err_unexpectedHwState,  /**< HW is in unexpected state, maybe due to bad API use. */
-    rom_err_verifyFailed,       /**< Programming of a quad-page ended with a data error. */
-    rom_err_invalidErrorCode,   /**< Unused error code, e.g., to initialize variables. */
+    rom_err_noError,           /**< Operation succeeded without an error. */
+    rom_err_badAddressRange,   /**< Operation rejected due to bad/invalid addresses. */
+    rom_err_driverNotReady,    /**< A driver API is used in a state, when it is not allowed. */
+    rom_err_quadPageNotBlank,  /**< Attempt to program a non-erased quad-page. */
+    rom_err_processPending,    /**< Operation successfully initiated, is still ongoing. */
+    rom_err_c55FmcErrorInPeg,  /**< C55FMC reported an error during flash array programming.*/
+    rom_err_unexpectedHwState, /**< HW is in unexpected state, maybe due to bad API use. */
+    rom_err_verifyFailed,      /**< Programming of a quad-page ended with a data error. */
+    rom_err_invalidErrorCode,  /**< Unused error code, e.g., to initialize variables. */
     
 } rom_errorCode_t;
 
@@ -59,6 +70,10 @@ typedef enum
  * Global data declarations
  */
 
+#if ROM_TEST_BUILD_WITH_ERROR_INJECTION == 1
+/* Last error code. Is public only in DEBUG compilation and for testing purpose. */
+extern rom_errorCode_t DATA_P1(rom_lastError);
+#endif
 
 /*
  * Global prototypes
@@ -84,6 +99,9 @@ bool rom_osStartProgram(uint32_t address, const uint8_t *pDataToProgram, uint32_
     
 /* Force finalization and programming of partly written flash page. */
 void rom_osFlushProgramDataBuffer(void);
+
+/* Get the last recently seen error in the flash ROM driver. */
+rom_errorCode_t rom_osFetchLastError(void);
 
 /* Regularly called main function of driver. */
 void rom_osFlashRomDriverMain(void);
