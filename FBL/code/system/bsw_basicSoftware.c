@@ -151,6 +151,28 @@ _Static_assert(BSW_PRIO_USER_TASK_10MS == prioEv10ms, "Inconsistency in public i
  * Data definitions
  */
 
+/** The version designation of the FBL. */
+const char RODATA(bsw_version)[] =
+    "DEVKIT-MPC5748G - Flash Bootloader\r\n"
+    "Copyright (C) 2017-2026  Peter Vranken\r\n"
+    "Version " BSW_VERSION
+    #ifdef DEBUG
+    " (Configuration: DEBUG"
+    #else
+    " (Configuration: PRODUCTION"
+    #endif
+    #ifdef LINK_IN_RAM
+    " in RAM)"
+    #else
+    " in flash ROM)"
+    #endif
+    "\r\n";
+
+/** The number of bytes/characters of the version string \a bsw_version. Note, for easy
+    printing, the version designation ends with an end of line character sequence. This
+    sequence i snot counted in \a bsw_sizeOfVersion. */
+uint8_t DATA_OS(bsw_sizeOfVersion) = 0u;
+
 /** The average CPU load produced by all tasks and interrupts in tens of percent. Can be
     read at any time by any context on any core. */
 volatile unsigned int UNCACHED_OS(bsw_cpuLoad) = 1000;
@@ -341,6 +363,11 @@ int /* _Noreturn */ main(int noArgs ATTRIB_DBG_ONLY, const char *argAry[] ATTRIB
                                 , /* PID_core2 */                    0
                                 , /* tiMaxTimeInUs */                1000
                                 );
+    
+    /* CCP requires that the version length fits into a single byte. -2: The trailing
+       \r\n doesn't count. */
+    assert(strlen(bsw_version) <= 255u);
+    bsw_sizeOfVersion = (uint8_t)strlen(bsw_version) - 2u;
 
     /* Initialize the serial output channel as prerequisite of using printf. */
     sio_osInitSerialInterface(/* baudRate */ 115200);

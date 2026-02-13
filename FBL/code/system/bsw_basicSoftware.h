@@ -4,7 +4,7 @@
  * @file bsw_basicSoftware.h
  * Definition of global interface of module bsw_basicSoftware.c
  *
- * Copyright (C) 2020-2022 Peter Vranken (mailto:Peter_Vranken@Yahoo.de)
+ * Copyright (C) 2020-2026 Peter Vranken (mailto:Peter_Vranken@Yahoo.de)
  *
  * This program is free software: you can redistribute it and/or modify it
  * under the terms of the GNU Lesser General Public License as published by the
@@ -30,6 +30,9 @@
 /*
  * Defines
  */
+
+/** Software version */
+#define BSW_VERSION "0.6.0"
 
 /** The MCU core, which most of the BSW is executed on. The I/O drivers are executed on
     this core and many of the APIs, which they offer, are only available to code running on
@@ -112,6 +115,12 @@ typedef struct bsw_rxCanMessage_t
 /*
  * Global data declarations
  */
+
+/* The version designation of the FBL. */
+extern const char RODATA(bsw_version)[];
+
+/* The number of bytes/characters of the version string \a bsw_version. */
+extern uint8_t DATA_OS(bsw_sizeOfVersion);
 
 /* The average CPU load produced by all tasks and interrupts in tens of percent. Can be
    read at any time by any context on any core. */

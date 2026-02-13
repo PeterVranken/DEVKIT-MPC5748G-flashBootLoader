@@ -23,6 +23,8 @@
  *   ccp_osFilterForCcpMsg
  *   ccp_taskOsRxCcp
  * Local functions
+ *   initFsm
+ *   isServiceResponseAddress
  *   setTimeout
  *   checkTimeout
  *   discardCro
@@ -39,6 +41,7 @@
  *   onClearMemory
  *   submitProgram
  *   onProgram
+ *   onDiagService
  *   onRxCroMsg
  *   onCanError
  *   reSubmitCroCmd
@@ -63,9 +66,9 @@
 #include "typ_types.h"
 #include "bsw_basicSoftware.h"
 #include "rtos.h"
-//#include "bsw_canInterface.h"
 #include "cdr_canDriverAPI.h"
 #include "rom_flashRomDriver.h"
+#include "stm_systemTimer.h"
 
 /*
  * Defines
@@ -105,6 +108,9 @@
     flash erasure operation. Therefore this timeout should be in the magnitude of 10s. */
 #define CCP_TI_MAX_WAIT_ABORT_FLASH_DRV_BUSY_IN_MS  20000u
 
+/** The number of bytes of a correct authentication key. */
+#define SIZE_OF_AUTHENTICATION_KEY  64u
+
 /** A full memory barrier, which we use to ensure that the volatile data-valid flag is
     toggled only after all data processing has completed. */
 #define MEMORY_BARRIER_FULL()   {atomic_thread_fence(memory_order_seq_cst);}
@@ -122,6 +128,8 @@ enum ccpCmd_t
     ccpCmd_disconnect = 0x07u,
     ccpCmd_clearMemory = 0x10u,
     ccpCmd_program = 0x18u,
+    ccpCmd_diagService = 0x20,
+    ccpCmd_actionService = 0x21,
     ccpCmd_program6 = 0x22u,
 };
 
@@ -133,6 +141,22 @@ enum ccpCmdResponseCode_t
     ccpCmdRespCode_paramOutOfRange = 0x32u,
     ccpCmdRespCode_overload = 0x34u,
 };
+
+/** The diagnostic service numbers in use. */
+enum diagServiceNum_t
+{
+    diagSN_uploadVersionFbl = 0x00u,
+    diagSN_uploadSeed = 0x01u,
+};
+
+/** The action service numbers in use. */
+enum actionServiceNum_t
+{
+    actnSN_resetToApp = 0x00u,
+    actnSN_resetToFbl = 0x01u,
+    actnSN_checkKey = 0x02u,
+};
+
 
 /*
  * Local prototypes
@@ -215,6 +239,14 @@ static struct ccpFsm_t
 
 } _ccpFsm SECTION(.data.OS._ccpFsm);
 
+/** The challenge for the seed and key authorization. The array holds the actual key as
+    first value and the adress of the key upload area as second word. It needs to be array
+    as the CCP upload of the information requires a contiguous memory area for all
+    information. */
+static uint32_t DATA_OS(_seedForAuthorizationAry[2]) = {[0] = 0u, [1] = 0u,};
+
+/** The upload area for the key during authentication. */
+static uint8_t _authenticationKeyAry[SIZE_OF_AUTHENTICATION_KEY];
 
 /*
  * Function implementation
@@ -241,6 +273,41 @@ static void initFsm(void)
 
 } /* initFsm */
 
+
+/**
+ * Check if an address requested by CCP command UPLOAD or DOWNLOAD points to the result of
+ * a DIAG_SERVICE or ACTION_SERVICE request.
+ *   @param[in] isUpload
+ * The check depends on whether the CCP client wants to up- or download data.
+ *   @param[in] address
+ * The first address of the memory area requested for upload.
+ *   @param[in] size
+ * The length of the memory area in Byte.
+ */
+static inline bool isServiceResponseAddress(bool isUpload, uint32_t address, uint32_t size)
+{
+    const uint32_t endAddr = address + size;
+
+    /* We can handle the overflow at the end of the 32 Bit address space very easily,
+       because the very last address in the address space is surely not used for the
+       requestable information. */
+    if(endAddr < address)
+        return false;
+
+    /* We simply check for all the few services, we support. */
+    return isUpload
+           && (address >= (uint32_t)&bsw_version[0]  
+               &&  endAddr <= (uint32_t)&bsw_version[bsw_sizeOfVersion]
+               ||  address >= (uint32_t)&_seedForAuthorizationAry[0]  
+                   &&  endAddr <= (uint32_t)&_seedForAuthorizationAry[0]
+                                  + sizeof(_seedForAuthorizationAry)
+              )
+           || !isUpload
+              && (address >= (uint32_t)&_authenticationKeyAry[0]  
+                  &&  endAddr <= (uint32_t)&_authenticationKeyAry[0]
+                                 + sizeof(_authenticationKeyAry)
+                 );
+} /* isServiceResponseAddress */
 
 /**
  * Initialize the module. Needs to be called prior to the very first activation of the CCP
@@ -510,12 +577,12 @@ static void finishDisconnect(void)
 {
     /* As the flash ROM driver is free after completion of all pending activities we may
        return the DTO. */
-       
+
     /* We still check for a pending fault in the flash ROM driver. (Resulting from an
        earlier command.) We still need to return this information to the CCP client. We do
        this by negative response code. */
     const bool hasDrvFault = rom_osFetchLastError() != rom_err_noError;
-    
+
     /* Since CCP can't have two sessions with two different ECUs open at a time, the station
        address in the command needs to be ours - otherwise we see a protocol error. The
        reaction is the same in both cases; we close the session. Only the returned response
@@ -538,7 +605,7 @@ static void finishDisconnect(void)
     #endif
 
     finalizeDtoMsg(reponseCode);
-    
+
 } /* finishDisconnect */
 
 
@@ -574,7 +641,10 @@ static void onSetMta(void)
     const uint8_t addrExt = _ccpFsm.croMsg.payload[3];
     const bool isMta0 = _ccpFsm.croMsg.payload[2] == 0u;
     const uint32_t addr = readU32FromCro(/*idxFirstByte*/ 4u);
-    const bool isValidAddr = addrExt == 0u  && rom_isValidFlashAddressRange(addr, 1);
+    const bool isValidAddr = addrExt == 0u  
+                             && (rom_isValidFlashAddressRange(addr, 1u)
+                                 || isServiceResponseAddress(/*isUpload*/ false, addr, 1u)
+                                );
 
     unsigned int reponseCode;
     if(isMta0 && isValidAddr)
@@ -621,7 +691,7 @@ static void finishUpload(void)
     assert(_ccpFsm.noBytesToProcess <= 5);
     memcpy(&_ccpFsm.dtoMsg.payload[3], (const void*)_ccpFsm.mta0, _ccpFsm.noBytesToProcess);
     _ccpFsm.mta0 += _ccpFsm.noBytesToProcess;
-    
+
     /* We still check for a pending fault in the flash ROM driver. (Resulting from an
        earlier command.) We still need to return this information to the CCP client. We do
        this by negative response code. */
@@ -641,7 +711,11 @@ static void onUpload(void)
     _ccpFsm.noBytesToProcess = (unsigned)_ccpFsm.croMsg.payload[2];
     const bool isValidAddrRange = rom_isValidFlashAddressRange( _ccpFsm.mta0
                                                               , _ccpFsm.noBytesToProcess
-                                                              );
+                                                              )
+                                  || isServiceResponseAddress( /*isUpload*/ true
+                                                             , _ccpFsm.mta0
+                                                             , _ccpFsm.noBytesToProcess
+                                                             );
     if(_ccpFsm.noBytesToProcess <= 5u  && isValidAddrRange)
     {
         if(isFlashDriverReady())
@@ -853,6 +927,49 @@ static void onProgram(bool isProgram6)
 
 
 /**
+ * The reaction on a received CCP DIAG_SERVICE command.
+ */
+static void onDiagService(void)
+{
+    /* For both, DIAG_SERVICE and ACTION_SERVICE, the CCP spec (2.1 as of Feb 18, 1999)
+       says in the command description that the service number would be 16 Bit but the
+       illustrated example on the same page shows it as an 8 Bit value. An I-net query
+       clearly stated that the 8 Bit example is correct. */
+    const uint8_t serviceNo = _ccpFsm.croMsg.payload[2];
+
+    enum ccpCmdResponseCode_t reponseCode = ccpCmdRespCode_noError;
+    uint8_t noResponseBytes;
+    if(serviceNo == diagSN_uploadVersionFbl)
+    {
+        /* The MTA is set to where the response has to be uploaded from. */
+        _ccpFsm.mta0 = (uint32_t)&bsw_version[0];
+        noResponseBytes = bsw_sizeOfVersion;
+    }
+    else if(serviceNo == diagSN_uploadSeed)
+    {
+        /* Choose a new, random seed value. */
+        _seedForAuthorizationAry[0] = 0x01020304;//stm_osGetSystemTime(/*idxTimer*/ 0u);
+        
+        /* Provide the CCP UPLOAD address to the CCP client together with the seed. (The
+           upload size is implicit to the chosen crypto algorithm.) */
+        _seedForAuthorizationAry[1] = (uint32_t)&_authenticationKeyAry[0];
+
+        _ccpFsm.mta0 = (uint32_t)&_seedForAuthorizationAry[0];
+        noResponseBytes = sizeof(_seedForAuthorizationAry);
+    }
+    else
+    {
+        reponseCode = ccpCmdRespCode_paramOutOfRange;
+        noResponseBytes = 0;
+    }
+
+    _ccpFsm.dtoMsg.payload[3] = noResponseBytes;
+    finalizeDtoMsg(reponseCode);
+
+} /* onDiagService */
+
+
+/**
  * Most relevant input event of CCP state machine: A new CRO command message has been
  * received.
  */
@@ -881,7 +998,7 @@ static void onRxCroMsg(void)
                 #endif
                 _ccpFsm.state = ccp_stateFsm_connected;
                 finalizeDtoMsg(ccpCmdRespCode_noError);
-                
+
                 /* If there still is a pending fault of the flash ROM driver (from an
                    earlier session) then we ignore it silently. This situation may happen,
                    if a fault situation let to abortion of the last session. (If it were
@@ -940,8 +1057,12 @@ static void onRxCroMsg(void)
             onProgram(/*isProgram6*/ true);
             break;
 
+        case ccpCmd_diagService:
+            onDiagService();
+            break;
+
         default:
-            #if VERBOSE >= 2
+            #if VERBOSE >= 1
             iprintf("Unsupported CCP CRO command %u received.\r\n", _ccpFsm.croMsg.payload[0]);
             #endif
             finalizeDtoMsg(ccpCmdRespCode_unknownCommand);

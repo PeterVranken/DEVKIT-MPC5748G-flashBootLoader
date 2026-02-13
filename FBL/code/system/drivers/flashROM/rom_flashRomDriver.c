@@ -153,7 +153,7 @@ void rom_osInitFlashRomDriver(void)
  *   @param[in] address
  * The first address of the memory area.
  *   @param[in] size
- * The length of the memory range in Byte.
+ * The length of the memory area in Byte.
  */
 bool rom_isValidFlashAddressRange(uint32_t address, uint32_t size)
 {

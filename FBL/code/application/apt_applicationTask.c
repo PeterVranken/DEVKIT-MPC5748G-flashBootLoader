@@ -65,9 +65,6 @@
  * Defines
  */
 
-/** Software version */
-#define VERSION "0.5.0"
-
 /** Floating point random number with more than 15 Bit resolution; taken fron
     http://www.azillionmonkeys.com/qed/random.html on Jan 23, 2017.
       @remark Caution, the definition make use of a GNU extension and is not portable. */
@@ -195,29 +192,12 @@ static void tokenizeCmdLine( unsigned int * const pArgC
 } /* End of tokenizeCmdLine */
 
 
-
 /**
  * Print version designation.
  */
 static void version()
 {
-    static const char RODATA(version)[] =
-    "DEVKIT-MPC5748G - Flash Bootloader\r\n"
-    "Copyright (C) 2017-2026  Peter Vranken\r\n"
-    "Version " VERSION
-    #ifdef DEBUG
-    " (Configuration: DEBUG"
-    #else
-    " (Configuration: PRODUCTION"
-    #endif
-    #ifdef LINK_IN_RAM
-    " in RAM)"
-    #else
-    " in flash ROM)"
-    #endif
-    "\r\n";
-
-    fputs(version, stdout);
+    fputs(bsw_version, stdout);
     
 } /* End of version */
 
