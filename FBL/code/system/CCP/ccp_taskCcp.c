@@ -23,7 +23,9 @@
  *   ccp_osFilterForCcpMsg
  *   ccp_taskOsRxCcp
  * Local functions
+ *   resetAuthentication
  *   initFsm
+ *   checkForDownloadKey
  *   isServiceResponseAddress
  *   setTimeout
  *   checkTimeout
@@ -37,6 +39,8 @@
  *   onSetMta
  *   finishUpload
  *   onUpload
+ *   finishDownload
+ *   onDownload
  *   submitClearMemory
  *   onClearMemory
  *   submitProgram
@@ -124,6 +128,7 @@ enum ccpCmd_t
 {
     ccpCmd_connect = 0x01u,
     ccpCmd_setMta = 0x02u,
+    ccpCmd_download = 0x03u,
     ccpCmd_upload = 0x04u,
     ccpCmd_disconnect = 0x07u,
     ccpCmd_clearMemory = 0x10u,
@@ -131,6 +136,7 @@ enum ccpCmd_t
     ccpCmd_diagService = 0x20,
     ccpCmd_actionService = 0x21,
     ccpCmd_program6 = 0x22u,
+    ccpCmd_download6 = 0x23u,
 };
 
 /** The CCP command retun codes, which are in use. */
@@ -246,11 +252,31 @@ static struct ccpFsm_t
 static uint32_t DATA_OS(_seedForAuthorizationAry[2]) = {[0] = 0u, [1] = 0u,};
 
 /** The upload area for the key during authentication. */
-static uint8_t _authenticationKeyAry[SIZE_OF_AUTHENTICATION_KEY];
+static uint8_t DATA_OS(_authenticationKeyAry)[SIZE_OF_AUTHENTICATION_KEY];
+
+/** The authentication state. */
+static enum 
+{ 
+    stKey_notAuthenticated, 
+    stKey_authenticationFailed, 
+    stKey_authentified,
+    
+} _stateAuthentication SECTION(.data.OS._stateAuthentication) = stKey_notAuthenticated;
 
 /*
  * Function implementation
  */
+
+/**
+ * Initialize the authentication state.
+ */
+static inline void resetAuthentication(void)
+{
+    _stateAuthentication = stKey_notAuthenticated;
+    memset(&_authenticationKeyAry[0], 0, sizeof(_authenticationKeyAry));
+
+} /* resetAuthentication */
+
 
 /**
  * Initialize or rset the finite state machine, which implements the CCP protocol.\n
@@ -267,11 +293,56 @@ static void initFsm(void)
     _ccpFsm.noBytesToProcess = 0u;
     _ccpFsm.canTxErr = false;
     _ccpFsm.canRxErrAck = _ccpFsm.canRxErrCnt;
+    resetAuthentication();
 
     MEMORY_BARRIER_FULL();
     _ccpFsm.croMsg.isBufferFree = true;
 
 } /* initFsm */
+
+
+/**
+ * Check, if CCP DOWNLOAD completed the download of an authentication key. If so, check the
+ * key and update the global authentication state.
+ */
+static void checkForDownloadKey()
+{
+    /* We don't really get a clear signal or notification (e.g., by action service), when
+       the key is entirely downloaded. We assume the normal doing of the CCP client,
+       downloading with rising MTA. If the MTA reaches the end of the agreed buffer then
+       the key download has completed. If the client uses another download pattern then bad
+       luck, authentication will fail, which is not our problem.
+         1st term in condition: We allow only one attempt per session. */
+    if(_stateAuthentication == stKey_notAuthenticated
+       &&  _ccpFsm.mta0 == (uint32_t)&_authenticationKeyAry[SIZE_OF_AUTHENTICATION_KEY])
+    {
+        /* Check key. */
+        // TODO For now we don't have crypto integrated.
+        bool keyOk = true;
+        for(unsigned int u=0u; u<SIZE_OF_AUTHENTICATION_KEY; ++u)
+        {
+            if(_authenticationKeyAry[u] != u)
+            {
+                keyOk = false;
+                break;
+            }
+        }
+        if(keyOk)
+        {
+            #if VERBOSE >= 1
+            iprintf("Authentication succeeded.\r\n");
+            #endif
+            _stateAuthentication = stKey_authentified;
+        }
+        else
+        {
+            #if VERBOSE >= 1
+            iprintf("Authentication failed.\r\n");
+            #endif
+            _stateAuthentication = stKey_authenticationFailed;
+        }
+    }
+} /* checkForDownloadKey */
 
 
 /**
@@ -605,6 +676,7 @@ static void finishDisconnect(void)
     #endif
 
     finalizeDtoMsg(reponseCode);
+    resetAuthentication();
 
 } /* finishDisconnect */
 
@@ -740,6 +812,96 @@ static void onUpload(void)
         finalizeDtoMsg(ccpCmdRespCode_paramOutOfRange);
     }
 } /* onUpload */
+
+
+/**
+ * When the availability and the correctness of the DOWNLOAD comand have been checked, then
+ * this function completes the operation.\n
+ *   This function is either called immediately on reception of a CCP DOWNLOAD command
+ * or a bit later, when we first had to wait for the flash ROM driver becoming idle.
+ */
+static void finishDownload(void)
+{
+    /* As the flash driver is free we may execute the download command immediately and
+       return the DTO. */
+    #if VERBOSE >= 3
+    iprintf( "Now downloading %lu Bytes to 0x%08lX.\r\n"
+           , _ccpFsm.noBytesToProcess
+           , _ccpFsm.mta0
+           );
+    #endif
+    assert(_ccpFsm.noBytesToProcess <= 6);
+    memcpy((void*)_ccpFsm.mta0, _ccpFsm.pDataToProgram, _ccpFsm.noBytesToProcess);
+    _ccpFsm.mta0 += _ccpFsm.noBytesToProcess;
+    writeMta0IntoDto();
+
+    /* Currently, our only allowed download is for providing the key in the authentication
+       dialog. Therefore, we can directly check here, if the download of the key has been
+       completed. Not a nice concept but appropriate for the use case. */
+#warning We could return authentification error by negative response code for download
+    checkForDownloadKey();
+
+    /* We still check for a pending fault in the flash ROM driver. (Resulting from an
+       earlier command.) We still need to return this information to the CCP client. We do
+       this by negative response code. */
+    finalizeDtoMsg(rom_osFetchLastError() == rom_err_noError? ccpCmdRespCode_noError
+                                                            : ccpCmdRespCode_paramOutOfRange
+                  );
+    _ccpFsm.state = ccp_stateFsm_connected;
+
+} /* finishDownload */
+
+
+/**
+ * The reaction on a received CCP DOWNLOAD command.
+ *   @program[in] isDownload6
+ * The same function is used for CCP command DOWNLOAD and DOWNLOAD_6. The argument tells,
+ * which actual command to serve.
+ */
+static void onDownload(bool isDownload6)
+{
+    if(isDownload6)
+    {
+        _ccpFsm.noBytesToProcess = 6u;
+        _ccpFsm.pDataToProgram = &_ccpFsm.croMsg.payload[2];
+    }
+    else
+    {
+        _ccpFsm.noBytesToProcess = (unsigned)_ccpFsm.croMsg.payload[2];
+        _ccpFsm.pDataToProgram = &_ccpFsm.croMsg.payload[3];
+    }
+    
+    /* Our only supported use-case for the download is providing data to some diagnostic or
+       action service. */
+#warning check what happens if MTA not set by client. Is it guaranteed that it will always point to invalid memory? Is it invalidated on CONNECT and DISCONNECT?
+    const bool isValidAddrRange = isServiceResponseAddress( /*isUpload*/ false
+                                                          , _ccpFsm.mta0
+                                                          , _ccpFsm.noBytesToProcess
+                                                          );
+    if(isValidAddrRange  &&  (isDownload6 || _ccpFsm.noBytesToProcess <= 5u))
+    {
+        if(isFlashDriverReady())
+            finishDownload();
+        else
+        {
+            /* If the flash driver is busy then we enter the state to wait for its
+               availability. We don't store additional information, all we need to know
+               later remains in _ccpFsm and the CRO message buffer. */
+            setTimeout(CCP_TI_MAX_WAIT_FLASH_DRV_BUSY_IN_MS);
+            _ccpFsm.state = ccp_stateFsm_flashDrvBusy;
+        }
+    }
+    else
+    {
+        #if VERBOSE >= 1
+        iprintf( "Downloading %lu Bytes to 0x%08lX is rejected.\r\n"
+               , _ccpFsm.noBytesToProcess
+               , _ccpFsm.mta0
+               );
+        #endif
+        finalizeDtoMsg(ccpCmdRespCode_paramOutOfRange);
+    }
+} /* onDownload */
 
 
 /**
@@ -996,6 +1158,7 @@ static void onRxCroMsg(void)
                 #if VERBOSE >= 1
                 iprintf("Connected with CCP client.\r\n");
                 #endif
+                resetAuthentication();
                 _ccpFsm.state = ccp_stateFsm_connected;
                 finalizeDtoMsg(ccpCmdRespCode_noError);
 
@@ -1043,6 +1206,14 @@ static void onRxCroMsg(void)
 
         case ccpCmd_upload:
             onUpload();
+            break;
+
+        case ccpCmd_download:
+            onDownload(/*isDownload6*/ false);
+            break;
+
+        case ccpCmd_download6:
+            onDownload(/*isDownload6*/ true);
             break;
 
         case ccpCmd_clearMemory:
@@ -1115,6 +1286,10 @@ static void reSubmitCroCmd(void)
 
     case ccpCmd_upload:
         finishUpload();
+        break;
+
+    case ccpCmd_download:
+        finishDownload();
         break;
 
     case ccpCmd_clearMemory:
