@@ -72,23 +72,27 @@ int crypto_sign_verify_detached(
 
 
 int main(void) {
-    uint8_t privateA[64]; // 32 Byte seed of key, followed by 32 Byte of key
-    uint8_t publicA[32];  // 32 Byte of key
+    /* 32 Byte secret key, followed by 32 Byte of public key. The secret key is also called
+       seed, as is allows to generate the public key. */
+    uint8_t privateA[64]; 
+    
+    /* The public key, same as second half of privateA. */
+    uint8_t publicA[32];
 
     /* Create a key pair. */
     crypto_sign_keypair(publicA, privateA);
     
-    printf("Seed:      ");
+    printf("Seed (secret key):              ");
     for(int i=0; i<32; ++i)
         printf(" %02X", privateA[i]);
     printf("\n");
 
-    printf("privateA:  ");
+    printf("publicA in 2nd half of privateA:");
     for(int i=32; i<sizeof(privateA); ++i)
         printf(" %02X", privateA[i]);
     printf("\n");
 
-    printf("publicA:   ");
+    printf("publicA:                        ");
     for(int i=0; i<sizeof(publicA); ++i)
         printf(" %02X", publicA[i]);
     printf("\n");
@@ -101,7 +105,7 @@ int main(void) {
     crypto_sign_detached(signedMsg, &signedMsgLen, msg, msgLen, privateA);
     assert(signedMsgLen == msgLen+64ull);
     
-    printf("Signature: ");
+    printf("Signature:                      ");
     for(int i=0; i<signedMsgLen; ++i)
         printf(" %02X", signedMsg[i]);
     printf("\n");
