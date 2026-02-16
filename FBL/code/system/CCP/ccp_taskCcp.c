@@ -73,6 +73,7 @@
 #include "cdr_canDriverAPI.h"
 #include "rom_flashRomDriver.h"
 #include "stm_systemTimer.h"
+#include "tweetnacl.h"
 
 /*
  * Defines
@@ -245,22 +246,62 @@ static struct ccpFsm_t
 
 } _ccpFsm SECTION(.data.OS._ccpFsm);
 
-/** The challenge for the seed and key authorization. The array holds the actual key as
-    first value and the adress of the key upload area as second word. It needs to be array
-    as the CCP upload of the information requires a contiguous memory area for all
-    information. */
-static uint32_t DATA_OS(_seedForAuthorizationAry[2]) = {[0] = 0u, [1] = 0u,};
+/** The data for the authentication requires careful binary buildup. We use a mixture of
+    union and static assertions to ensure correct sizes and alignments. This is required:
+      - The signature (aka "key" of the seed-and-key procedure) of the message needs to be
+    gapfree followed by the signed message (aka "seed" of the seed-and-key procedure).
+      - The message needs to be 4-Byte aligned uint32_t words. This is useful for easy
+    generation of the seed.
+      - The message needs to be gapfree followed by the uint32_t word holding the address
+    of the signature. This is required to make seed and CCP download address for the key
+    accessible to a single CCP download of 8 Byte. */
+static struct authenticationData_t
+{
+    /** An anonymous union allows to ensure the 4 Byte alignment even for the uin8_t buffer
+        for the signature (aka key). */
+    union
+    {
+        /** The 64 Byte of the signature, which is received from from CCP client. */
+        uint8_t keyAry[SIZE_OF_AUTHENTICATION_KEY];
 
-/** The upload area for the key during authentication. */
-static uint8_t DATA_OS(_authenticationKeyAry)[SIZE_OF_AUTHENTICATION_KEY];
+        /** This is not really used but needed to ensure correct alignment. */
+        uint32_t keyAry_u32[SIZE_OF_AUTHENTICATION_KEY/4];
+    };
+
+    /** The message (aka seed), which is sent to the CCP client. */
+    uint32_t seed;
+
+    /** The address of authenticationKeyAry, here provided for UPLOAD towards the CCP
+        client. */
+    uint32_t addrOfKey;
+
+} _authenticationData SECTION(.data.OS._authenticationData);
+
+_Static_assert( SIZE_OF_AUTHENTICATION_KEY % 4u == 0u
+                &&  offsetof(struct authenticationData_t, keyAry)
+                    == offsetof(struct authenticationData_t, keyAry_u32)
+                &&  offsetof(struct authenticationData_t, seed) == SIZE_OF_AUTHENTICATION_KEY
+                &&  offsetof(struct authenticationData_t, addrOfKey)
+                    == SIZE_OF_AUTHENTICATION_KEY + 4u
+                &&  (offsetof(struct authenticationData_t, seed) & 03u) == 0u
+              , "Bad modelling of authentication data buffer"
+              );
+
+/** The public key of the authentication procedure. */
+static const uint8_t RODATA(_publicKey)[32] =
+{ 0x03u, 0xA1u, 0x07u, 0xBFu, 0xF3u, 0xCEu, 0x10u, 0xBEu,
+  0x1Du, 0x70u, 0xDDu, 0x18u, 0xE7u, 0x4Bu, 0xC0u, 0x99u,
+  0x67u, 0xE4u, 0xD6u, 0x30u, 0x9Bu, 0xA5u, 0x0Du, 0x5Fu,
+  0x1Du, 0xDCu, 0x86u, 0x64u, 0x12u, 0x55u, 0x31u, 0xB8u,
+};
 
 /** The authentication state. */
-static enum 
-{ 
-    stKey_notAuthenticated, 
-    stKey_authenticationFailed, 
+static enum
+{
+    stKey_notAuthenticated,
+    stKey_authenticationFailed,
     stKey_authentified,
-    
+
 } _stateAuthentication SECTION(.data.OS._stateAuthentication) = stKey_notAuthenticated;
 
 /*
@@ -273,7 +314,7 @@ static enum
 static inline void resetAuthentication(void)
 {
     _stateAuthentication = stKey_notAuthenticated;
-    memset(&_authenticationKeyAry[0], 0, sizeof(_authenticationKeyAry));
+    memset(&_authenticationData, 0, sizeof(_authenticationData));
 
 } /* resetAuthentication */
 
@@ -304,9 +345,14 @@ static void initFsm(void)
 /**
  * Check, if CCP DOWNLOAD completed the download of an authentication key. If so, check the
  * key and update the global authentication state.
+ *   @return
+ * The function returns \a false if a key upload has been recognized but the authentication
+ * failed. Get \a true otherwise.
  */
-static void checkForDownloadKey()
+static bool checkForDownloadKey()
 {
+    bool keyOk = true;
+
     /* We don't really get a clear signal or notification (e.g., by action service), when
        the key is entirely downloaded. We assume the normal doing of the CCP client,
        downloading with rising MTA. If the MTA reaches the end of the agreed buffer then
@@ -314,19 +360,24 @@ static void checkForDownloadKey()
        luck, authentication will fail, which is not our problem.
          1st term in condition: We allow only one attempt per session. */
     if(_stateAuthentication == stKey_notAuthenticated
-       &&  _ccpFsm.mta0 == (uint32_t)&_authenticationKeyAry[SIZE_OF_AUTHENTICATION_KEY])
+       &&  _ccpFsm.mta0 == (uint32_t)&_authenticationData.keyAry[SIZE_OF_AUTHENTICATION_KEY]
+      )
     {
         /* Check key. */
-        // TODO For now we don't have crypto integrated.
-        bool keyOk = true;
-        for(unsigned int u=0u; u<SIZE_OF_AUTHENTICATION_KEY; ++u)
-        {
-            if(_authenticationKeyAry[u] != u)
-            {
-                keyOk = false;
-                break;
-            }
-        }
+        keyOk = crypto_sign_verify( &_authenticationData.keyAry[0]
+                                  , SIZE_OF_AUTHENTICATION_KEY
+                                    + sizeof(_authenticationData.seed)
+                                  , _publicKey
+                                  );
+//        // TODO For now we don't have crypto integrated.
+//        for(unsigned int u=0u; u<SIZE_OF_AUTHENTICATION_KEY; ++u)
+//        {
+//            if(_authenticationData.keyAry[u] != u)
+//            {
+//                keyOk = false;
+//                break;
+//            }
+//        }
         if(keyOk)
         {
             #if VERBOSE >= 1
@@ -342,6 +393,9 @@ static void checkForDownloadKey()
             _stateAuthentication = stKey_authenticationFailed;
         }
     }
+
+    return keyOk;
+
 } /* checkForDownloadKey */
 
 
@@ -367,16 +421,17 @@ static inline bool isServiceResponseAddress(bool isUpload, uint32_t address, uin
 
     /* We simply check for all the few services, we support. */
     return isUpload
-           && (address >= (uint32_t)&bsw_version[0]  
+           && (address >= (uint32_t)&bsw_version[0]
                &&  endAddr <= (uint32_t)&bsw_version[bsw_sizeOfVersion]
-               ||  address >= (uint32_t)&_seedForAuthorizationAry[0]  
-                   &&  endAddr <= (uint32_t)&_seedForAuthorizationAry[0]
-                                  + sizeof(_seedForAuthorizationAry)
+               ||  address >= (uint32_t)&_authenticationData.seed
+                   &&  endAddr <= (uint32_t)&_authenticationData.seed
+                                  + sizeof(_authenticationData.seed)
+                                  + sizeof(_authenticationData.addrOfKey)
               )
            || !isUpload
-              && (address >= (uint32_t)&_authenticationKeyAry[0]  
-                  &&  endAddr <= (uint32_t)&_authenticationKeyAry[0]
-                                 + sizeof(_authenticationKeyAry)
+              && (address >= (uint32_t)&_authenticationData.keyAry[0]
+                  &&  endAddr <= (uint32_t)&_authenticationData.keyAry[0]
+                                 + sizeof(_authenticationData.keyAry)
                  );
 } /* isServiceResponseAddress */
 
@@ -713,7 +768,7 @@ static void onSetMta(void)
     const uint8_t addrExt = _ccpFsm.croMsg.payload[3];
     const bool isMta0 = _ccpFsm.croMsg.payload[2] == 0u;
     const uint32_t addr = readU32FromCro(/*idxFirstByte*/ 4u);
-    const bool isValidAddr = addrExt == 0u  
+    const bool isValidAddr = addrExt == 0u
                              && (rom_isValidFlashAddressRange(addr, 1u)
                                  || isServiceResponseAddress(/*isUpload*/ false, addr, 1u)
                                 );
@@ -870,7 +925,7 @@ static void onDownload(bool isDownload6)
         _ccpFsm.noBytesToProcess = (unsigned)_ccpFsm.croMsg.payload[2];
         _ccpFsm.pDataToProgram = &_ccpFsm.croMsg.payload[3];
     }
-    
+
     /* Our only supported use-case for the download is providing data to some diagnostic or
        action service. */
 #warning check what happens if MTA not set by client. Is it guaranteed that it will always point to invalid memory? Is it invalidated on CONNECT and DISCONNECT?
@@ -1110,14 +1165,14 @@ static void onDiagService(void)
     else if(serviceNo == diagSN_uploadSeed)
     {
         /* Choose a new, random seed value. */
-        _seedForAuthorizationAry[0] = 0x01020304;//stm_osGetSystemTime(/*idxTimer*/ 0u);
-        
+        _authenticationData.seed = 0x01020304;//stm_osGetSystemTime(/*idxTimer*/ 0u);
+
         /* Provide the CCP UPLOAD address to the CCP client together with the seed. (The
            upload size is implicit to the chosen crypto algorithm.) */
-        _seedForAuthorizationAry[1] = (uint32_t)&_authenticationKeyAry[0];
-
-        _ccpFsm.mta0 = (uint32_t)&_seedForAuthorizationAry[0];
-        noResponseBytes = sizeof(_seedForAuthorizationAry);
+        _authenticationData.addrOfKey = (uint32_t)&_authenticationData.keyAry[0];
+        _ccpFsm.mta0 = (uint32_t)&_authenticationData.seed;
+        noResponseBytes = sizeof(_authenticationData.seed)
+                          + sizeof(_authenticationData.addrOfKey);
     }
     else
     {

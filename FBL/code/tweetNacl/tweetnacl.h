@@ -1,5 +1,6 @@
 #ifndef TWEETNACL_H
 #define TWEETNACL_H
+#include <stdbool.h>
 #define crypto_auth_PRIMITIVE "hmacsha512256"
 #define crypto_auth crypto_auth_hmacsha512256
 #define crypto_auth_verify crypto_auth_hmacsha512256_verify
@@ -211,6 +212,7 @@ extern int crypto_secretbox_xsalsa20poly1305_tweet_open(unsigned char *,const un
 #define crypto_sign_ed25519_tweet_SECRETKEYBYTES 64
 extern int crypto_sign_ed25519_tweet(unsigned char *,unsigned long long *,const unsigned char *,unsigned long long,const unsigned char *);
 extern int crypto_sign_ed25519_tweet_open(unsigned char *,unsigned long long *,const unsigned char *,unsigned long long,const unsigned char *);
+bool crypto_sign_verify(const unsigned char *sm, unsigned long long n, const unsigned char pk[32]);
 extern int crypto_sign_ed25519_tweet_keypair(unsigned char *,unsigned char *);
 #define crypto_sign_ed25519_tweet_VERSION "-"
 #define crypto_sign_ed25519 crypto_sign_ed25519_tweet

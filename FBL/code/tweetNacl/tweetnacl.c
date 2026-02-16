@@ -1,3 +1,5 @@
+#include <stdbool.h>
+#include <assert.h>
 #include "tweetnacl.h"
 #define FOR(i,n) for (i = 0;i < n;++i)
 #define sv static void
@@ -806,4 +808,46 @@ int crypto_sign_open(u8 *m,u64 *mlen,const u8 *sm,u64 n,const u8 *pk)
   FOR(i,n) m[i] = sm[i + 64];
   *mlen = n;
   return 0;
+}
+
+/**
+ * Verify the signature in a signed message.
+ *   @return
+ * Get \a true if signature is valid and fits to message contents. Get \a false otherwise.
+ *   @param sm
+ * The signed message. It is composed of the first 64 Byte of the signature, follwoed by
+ * the unencrypted n-64 Byte of the signed message.
+ *   @param[in] n
+ * The size in Byte of the complete signed message. Needs to be at least 64 Byte as this
+ * is the size of only the signature.
+ *   @param pk
+ * The public key.
+ */
+bool crypto_sign_verify(const u8 *sm, u64 n, const u8 pk[32])
+{
+  assert(n >= 64);
+  
+  int i;
+  u8 t[32],h[64];
+  gf p[4],q[4];
+
+  if (unpackneg(q,pk)) return -1;
+
+  u8 m[n];
+  FOR(i,32) m[i] = sm[i];
+  FOR(i,32) m[i+32] = pk[i];
+  for(i=64; i<n; ++i) m[i] = sm[i];
+  crypto_hash(h,m,n);
+  reduce(h);
+  scalarmult(p,q,h);
+
+  scalarbase(q,sm + 32);
+  add(p,q);
+  pack(t,p);
+
+  if (crypto_verify_32(sm, t)) {
+    return false;
+  } else {
+    return true;
+  }
 }
