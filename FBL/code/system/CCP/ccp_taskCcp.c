@@ -1,7 +1,7 @@
 /**
  * @file ccp_taskCcp.c
- * This file implements the CCP communication task. It is activated on a CCP CRO Rx event
- * and it handles the received command message.
+ * This file implements the CCP communication task. It is activated on a CCP
+ * CRO Rx event and it handles the received command message.
  *
  * Copyright (C) 2026 Peter Vranken (mailto:Peter_Vranken@Yahoo.de)
  *
@@ -39,7 +39,7 @@
  *   onSetMta
  *   finishUpload
  *   onUpload
- *   finishDownload
+ *   performDownload
  *   onDownload
  *   submitClearMemory
  *   onClearMemory
@@ -73,7 +73,7 @@
 #include "cdr_canDriverAPI.h"
 #include "rom_flashRomDriver.h"
 #include "stm_systemTimer.h"
-#include "tweetnacl.h"
+#include "tds_taskDigSignature.h"
 
 /*
  * Defines
@@ -86,6 +86,10 @@
 /** Development support: Set verbosity. If not zero then more or less information is
     written to the console. Needs to be zero for productive use. */
 #define VERBOSE     1
+
+/** The maximum wait time for completion of the authentication process. If it takes longer
+    then the authentication fails. */
+#define CCP_TI_MAX_WAIT_AUTHENTICATION_IN_MS        2000u
 
 /** The maximum wait time between arrival of a CCP command and the flash ROM driver
     returning to state idle (from a previous command). If this time elapses then the CCP
@@ -112,9 +116,6 @@
       A CAN protocol error can occur at any time, also in the middle of  along lasting
     flash erasure operation. Therefore this timeout should be in the magnitude of 10s. */
 #define CCP_TI_MAX_WAIT_ABORT_FLASH_DRV_BUSY_IN_MS  20000u
-
-/** The number of bytes of a correct authentication key. */
-#define SIZE_OF_AUTHENTICATION_KEY  64u
 
 /** A full memory barrier, which we use to ensure that the volatile data-valid flag is
     toggled only after all data processing has completed. */
@@ -182,6 +183,7 @@ static struct ccpFsm_t
     {
         ccp_stateFsm_idle,      /**< Not in a session, waiting for CONNECT. */
         ccp_stateFsm_connected, /**< Connected, waiting for next command. */
+        ccp_stateFsm_authenticationBusy,    /**< Waiting for result of authentication. */
         ccp_stateFsm_flashDrvBusy,  /**< Waiting for flash driver becoming available. */
         ccp_stateFsm_erasing,   /**< CLEAR_MEMORY can't be answerd immediately, we are
                                      waiting for the flash driver. */
@@ -246,63 +248,14 @@ static struct ccpFsm_t
 
 } _ccpFsm SECTION(.data.OS._ccpFsm);
 
-/** The data for the authentication requires careful binary buildup. We use a mixture of
-    union and static assertions to ensure correct sizes and alignments. This is required:
-      - The signature (aka "key" of the seed-and-key procedure) of the message needs to be
-    gapfree followed by the signed message (aka "seed" of the seed-and-key procedure).
-      - The message needs to be 4-Byte aligned uint32_t words. This is useful for easy
-    generation of the seed.
-      - The message needs to be gapfree followed by the uint32_t word holding the address
-    of the signature. This is required to make seed and CCP download address for the key
-    accessible to a single CCP download of 8 Byte. */
-static struct authenticationData_t
-{
-    /** An anonymous union allows to ensure the 4 Byte alignment even for the uin8_t buffer
-        for the signature (aka key). */
-    union
-    {
-        /** The 64 Byte of the signature, which is received from from CCP client. */
-        uint8_t keyAry[SIZE_OF_AUTHENTICATION_KEY];
-
-        /** This is not really used but needed to ensure correct alignment. */
-        uint32_t keyAry_u32[SIZE_OF_AUTHENTICATION_KEY/4];
-    };
-
-    /** The message (aka seed), which is sent to the CCP client. */
-    uint32_t seed;
-
-    /** The address of authenticationKeyAry, here provided for UPLOAD towards the CCP
-        client. */
-    uint32_t addrOfKey;
-
-} _authenticationData SECTION(.data.OS._authenticationData);
-
-_Static_assert( SIZE_OF_AUTHENTICATION_KEY % 4u == 0u
-                &&  offsetof(struct authenticationData_t, keyAry)
-                    == offsetof(struct authenticationData_t, keyAry_u32)
-                &&  offsetof(struct authenticationData_t, seed) == SIZE_OF_AUTHENTICATION_KEY
-                &&  offsetof(struct authenticationData_t, addrOfKey)
-                    == SIZE_OF_AUTHENTICATION_KEY + 4u
-                &&  (offsetof(struct authenticationData_t, seed) & 03u) == 0u
-              , "Bad modelling of authentication data buffer"
-              );
-
-/** The public key of the authentication procedure. */
-static const uint8_t RODATA(_publicKey)[32] =
-{ 0x03u, 0xA1u, 0x07u, 0xBFu, 0xF3u, 0xCEu, 0x10u, 0xBEu,
-  0x1Du, 0x70u, 0xDDu, 0x18u, 0xE7u, 0x4Bu, 0xC0u, 0x99u,
-  0x67u, 0xE4u, 0xD6u, 0x30u, 0x9Bu, 0xA5u, 0x0Du, 0x5Fu,
-  0x1Du, 0xDCu, 0x86u, 0x64u, 0x12u, 0x55u, 0x31u, 0xB8u,
-};
-
 /** The authentication state. */
 static enum
 {
-    stKey_notAuthenticated,
+    stKey_noAuthentificationYet,
     stKey_authenticationFailed,
     stKey_authentified,
 
-} _stateAuthentication SECTION(.data.OS._stateAuthentication) = stKey_notAuthenticated;
+} _stateAuthentication SECTION(.data.OS._stateAuthentication) = stKey_noAuthentificationYet;
 
 /*
  * Function implementation
@@ -313,8 +266,8 @@ static enum
  */
 static inline void resetAuthentication(void)
 {
-    _stateAuthentication = stKey_notAuthenticated;
-    memset(&_authenticationData, 0, sizeof(_authenticationData));
+    _stateAuthentication = stKey_noAuthentificationYet;
+    memset(&tds_authenticationData, 0, sizeof(tds_authenticationData));
 
 } /* resetAuthentication */
 
@@ -346,12 +299,25 @@ static void initFsm(void)
  * Check, if CCP DOWNLOAD completed the download of an authentication key. If so, check the
  * key and update the global authentication state.
  *   @return
- * The function returns \a false if a key upload has been recognized but the authentication
- * failed. Get \a true otherwise.
+ * The function returns \a true if a key upload has been recognized and the validation of
+ * the downloaded key has been initiated. The state machine must enter a wait state for the
+ * completion of the validation. Otherwise \a false is returned and CCP communication can
+ * continue with wait state.
  */
 static bool checkForDownloadKey()
 {
-    bool keyOk = true;
+// TODO SET_MTA könnte anderen Adresscheck benutzen als UPLOAD: Ergebnisse von XXX_SERVICE
+// sind erlaubt für UPLOAD, aber nicht für SET_MTA.
+// TODO stateAuthentication könnte neuen Status "angefragt" bekommen, der in DIAG_SERVIVE(1)
+// gesetzt wird. Er killt bestehende Authentifizierung und ist Voraussetzung für den Check
+// nach Upload. Immerhin kann der Client jederzeit und ungefragt und ohne DIAG_SERVICE(1)
+// an die Adresse hochladen - das sollte dann nicht jedesmal die Authentifizierung
+// auslösen.
+// TODO Zeitsperre: Feststellen, ob falscher Schlüssel (insb. alles 0, alles FF) auch 650ms
+// braucht. Wenn ja, dann ist keine weitere Zeitsperre für Authentifizierungsversuche
+// erforderlich.
+// TODO Authentifizierungsergebnis anwenden in den meisten Services. Bei UPLOAD nicht, wenn
+// Seed hochgeladen wird, bei DOWNLOAD nicht, wenn Key runtergeladen wird.
 
     /* We don't really get a clear signal or notification (e.g., by action service), when
        the key is entirely downloaded. We assume the normal doing of the CCP client,
@@ -359,42 +325,19 @@ static bool checkForDownloadKey()
        the key download has completed. If the client uses another download pattern then bad
        luck, authentication will fail, which is not our problem.
          1st term in condition: We allow only one attempt per session. */
-    if(_stateAuthentication == stKey_notAuthenticated
-       &&  _ccpFsm.mta0 == (uint32_t)&_authenticationData.keyAry[SIZE_OF_AUTHENTICATION_KEY]
+    if(_stateAuthentication == stKey_noAuthentificationYet
+       && _ccpFsm.mta0
+          == (uint32_t)&tds_authenticationData.keyAry[TDS_SIZE_OF_AUTHENTICATION_KEY]
       )
     {
-        /* Check key. */
-        keyOk = crypto_sign_verify( &_authenticationData.keyAry[0]
-                                  , SIZE_OF_AUTHENTICATION_KEY
-                                    + sizeof(_authenticationData.seed)
-                                  , _publicKey
-                                  );
-//        // TODO For now we don't have crypto integrated.
-//        for(unsigned int u=0u; u<SIZE_OF_AUTHENTICATION_KEY; ++u)
-//        {
-//            if(_authenticationData.keyAry[u] != u)
-//            {
-//                keyOk = false;
-//                break;
-//            }
-//        }
-        if(keyOk)
-        {
-            #if VERBOSE >= 1
-            iprintf("Authentication succeeded.\r\n");
-            #endif
-            _stateAuthentication = stKey_authentified;
-        }
-        else
-        {
-            #if VERBOSE >= 1
-            iprintf("Authentication failed.\r\n");
-            #endif
-            _stateAuthentication = stKey_authenticationFailed;
-        }
+        /* Initiate key check. The validation takes about 650ms and is delegated to a low
+           priority background task. (Time triggered tasks won't be blocked.) This requires
+           on the other hand that the state machine in this high priority task enters a
+           wait state until the validation is done. */
+        return tds_osStartVerificationOfSignature();
     }
-
-    return keyOk;
+    else
+        return false;
 
 } /* checkForDownloadKey */
 
@@ -422,16 +365,16 @@ static inline bool isServiceResponseAddress(bool isUpload, uint32_t address, uin
     /* We simply check for all the few services, we support. */
     return isUpload
            && (address >= (uint32_t)&bsw_version[0]
-               &&  endAddr <= (uint32_t)&bsw_version[bsw_sizeOfVersion]
-               ||  address >= (uint32_t)&_authenticationData.seed
-                   &&  endAddr <= (uint32_t)&_authenticationData.seed
-                                  + sizeof(_authenticationData.seed)
-                                  + sizeof(_authenticationData.addrOfKey)
+               && endAddr <= (uint32_t)&bsw_version[bsw_sizeOfVersion]
+               || address >= (uint32_t)&tds_authenticationData.seed
+                   && endAddr <= (uint32_t)&tds_authenticationData.seed
+                                  + sizeof(tds_authenticationData.seed)
+                                  + sizeof(tds_authenticationData.addrOfKey)
               )
            || !isUpload
-              && (address >= (uint32_t)&_authenticationData.keyAry[0]
-                  &&  endAddr <= (uint32_t)&_authenticationData.keyAry[0]
-                                 + sizeof(_authenticationData.keyAry)
+              && (address >= (uint32_t)&tds_authenticationData.keyAry[0]
+                  && endAddr <= (uint32_t)&tds_authenticationData.keyAry[0]
+                                 + sizeof(tds_authenticationData.keyAry)
                  );
 } /* isServiceResponseAddress */
 
@@ -510,12 +453,12 @@ bool ccp_osFilterForCcpMsg( bool * const pMsgConsumed
                           )
 {
     if(pRxCanMsg->idxCanBus == CCP_IDX_CAN_BUS_FOR_CCP
-       &&  pRxCanMsg->idxMailbox == CCP_IDX_MAILBOX_FOR_CCP_CRO
+       && pRxCanMsg->idxMailbox == CCP_IDX_MAILBOX_FOR_CCP_CRO
       )
     {
         /* We need to copy the message data. The pointer is valid only during the call of
            this function. */
-        if(pRxCanMsg->sizeOfPayload == 8u  &&  _ccpFsm.croMsg.isBufferFree)
+        if(pRxCanMsg->sizeOfPayload == 8u && _ccpFsm.croMsg.isBufferFree)
         {
             memcpy(_ccpFsm.croMsg.payload, pRxCanMsg->payload, 8u);
             MEMORY_BARRIER_FULL();
@@ -643,7 +586,7 @@ static inline void finalizeDtoMsg(enum ccpCmdResponseCode_t cmdResponseCode)
  */
 static inline uint32_t readU32FromCro(unsigned int idxFirstByte)
 {
-    assert(idxFirstByte >= 2u  &&  idxFirstByte <= 4u);
+    assert(idxFirstByte >= 2u && idxFirstByte <= 4u);
     return ((((uint32_t)_ccpFsm.croMsg.payload[idxFirstByte+0] << 8)
              | _ccpFsm.croMsg.payload[idxFirstByte+1]
             ) << 8
@@ -666,8 +609,8 @@ static inline void writeMta0IntoDto(void)
     const uint32_t addr = _ccpFsm.mta0;
     _ccpFsm.dtoMsg.payload[4] = (addr & 0xFF000000u) >> 24;
     _ccpFsm.dtoMsg.payload[5] = (addr & 0x00FF0000u) >> 16;
-    _ccpFsm.dtoMsg.payload[6] = (addr & 0x0000FF00u) >>  8;
-    _ccpFsm.dtoMsg.payload[7] = (addr & 0x000000FFu) >>  0;
+    _ccpFsm.dtoMsg.payload[6] = (addr & 0x0000FF00u) >> 8;
+    _ccpFsm.dtoMsg.payload[7] = (addr & 0x000000FFu) >> 0;
 }
 
 
@@ -843,7 +786,7 @@ static void onUpload(void)
                                                              , _ccpFsm.mta0
                                                              , _ccpFsm.noBytesToProcess
                                                              );
-    if(_ccpFsm.noBytesToProcess <= 5u  && isValidAddrRange)
+    if(_ccpFsm.noBytesToProcess <= 5u && isValidAddrRange)
     {
         if(isFlashDriverReady())
             finishUpload();
@@ -870,15 +813,17 @@ static void onUpload(void)
 
 
 /**
- * When the availability and the correctness of the DOWNLOAD comand have been checked, then
- * this function completes the operation.\n
+ * When the correctness of and the readiness for the DOWNLOAD comand have been checked,
+ * then this function performs the action.\n
  *   This function is either called immediately on reception of a CCP DOWNLOAD command
- * or a bit later, when we first had to wait for the flash ROM driver becoming idle.
+ * or a bit later, when we first had to wait for the flash ROM driver becoming idle.\n
+ *   Note, in contrast to the other functions finishXxx(), this function can't guarantee
+ * that the CCP command an be finalized; it may initiate the long lasting authentication
+ * and would then enter a wait state for completion of the latter.
  */
-static void finishDownload(void)
+static void performDownload(void)
 {
-    /* As the flash driver is free we may execute the download command immediately and
-       return the DTO. */
+    /* As the flash driver is free we may execute the download command immediately. */
     #if VERBOSE >= 3
     iprintf( "Now downloading %lu Bytes to 0x%08lX.\r\n"
            , _ccpFsm.noBytesToProcess
@@ -893,18 +838,23 @@ static void finishDownload(void)
     /* Currently, our only allowed download is for providing the key in the authentication
        dialog. Therefore, we can directly check here, if the download of the key has been
        completed. Not a nice concept but appropriate for the use case. */
-#warning We could return authentification error by negative response code for download
-    checkForDownloadKey();
-
-    /* We still check for a pending fault in the flash ROM driver. (Resulting from an
-       earlier command.) We still need to return this information to the CCP client. We do
-       this by negative response code. */
-    finalizeDtoMsg(rom_osFetchLastError() == rom_err_noError? ccpCmdRespCode_noError
-                                                            : ccpCmdRespCode_paramOutOfRange
-                  );
-    _ccpFsm.state = ccp_stateFsm_connected;
-
-} /* finishDownload */
+    if(checkForDownloadKey())
+    {
+        setTimeout(CCP_TI_MAX_WAIT_AUTHENTICATION_IN_MS);
+        _ccpFsm.state = ccp_stateFsm_authenticationBusy;
+    }
+    else
+    {
+        /* We still check for a pending fault in the flash ROM driver. (Resulting from an
+           earlier command.) We still need to return this information to the CCP client. We
+           do this by negative response code. */
+        finalizeDtoMsg(rom_osFetchLastError() == rom_err_noError
+                       ? ccpCmdRespCode_noError
+                       : ccpCmdRespCode_paramOutOfRange
+                      );
+        _ccpFsm.state = ccp_stateFsm_connected;
+    }
+} /* performDownload */
 
 
 /**
@@ -936,7 +886,7 @@ static void onDownload(bool isDownload6)
     if(isValidAddrRange  &&  (isDownload6 || _ccpFsm.noBytesToProcess <= 5u))
     {
         if(isFlashDriverReady())
-            finishDownload();
+            performDownload();
         else
         {
             /* If the flash driver is busy then we enter the state to wait for its
@@ -1165,14 +1115,14 @@ static void onDiagService(void)
     else if(serviceNo == diagSN_uploadSeed)
     {
         /* Choose a new, random seed value. */
-        _authenticationData.seed = 0x01020304;//stm_osGetSystemTime(/*idxTimer*/ 0u);
+        tds_authenticationData.seed = 0x01020304;//stm_osGetSystemTime(/*idxTimer*/ 0u);
 
         /* Provide the CCP UPLOAD address to the CCP client together with the seed. (The
            upload size is implicit to the chosen crypto algorithm.) */
-        _authenticationData.addrOfKey = (uint32_t)&_authenticationData.keyAry[0];
-        _ccpFsm.mta0 = (uint32_t)&_authenticationData.seed;
-        noResponseBytes = sizeof(_authenticationData.seed)
-                          + sizeof(_authenticationData.addrOfKey);
+        tds_authenticationData.addrOfKey = (uint32_t)&tds_authenticationData.keyAry[0];
+        _ccpFsm.mta0 = (uint32_t)&tds_authenticationData.seed;
+        noResponseBytes = sizeof(tds_authenticationData.seed)
+                          + sizeof(tds_authenticationData.addrOfKey);
     }
     else
     {
@@ -1344,7 +1294,7 @@ static void reSubmitCroCmd(void)
         break;
 
     case ccpCmd_download:
-        finishDownload();
+        performDownload();
         break;
 
     case ccpCmd_clearMemory:
@@ -1385,6 +1335,33 @@ static void onClockTick(void)
             iprintf("CCP session ends now.\r\n");
 #endif
             initFsm();
+        }
+        break;
+
+    case ccp_stateFsm_authenticationBusy:
+        /* The valdation of the digital signation received as key for authentication is
+           ongoing in a low priority background task. */
+        {        
+            const enum tds_taskState_t stAuth = tds_getStateOfVerificationTask();
+            if(checkTimeout(stAuth != tds_ts_busy) != to_busy)
+            {
+                #if VERBOSE >= 2
+                if(stAuth == tds_ts_busy)
+                    iprintf("Authentication stuck, DOWNLOAD command fails.\r\n");
+                #endif
+                if(stAuth == tds_ts_verificationOk)
+                    _stateAuthentication = stKey_authentified;
+                else
+                {
+                    resetAuthentication();
+                    _stateAuthentication = stKey_authenticationFailed;
+                }
+                _ccpFsm.state = ccp_stateFsm_connected;
+                finalizeDtoMsg(_stateAuthentication == stKey_authentified
+                               ? ccpCmdRespCode_noError
+                               : ccpCmdRespCode_paramOutOfRange
+                              );
+            }                
         }
         break;
 

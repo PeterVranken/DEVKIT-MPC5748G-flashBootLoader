@@ -52,9 +52,9 @@
 #include "rom_flashRomDriver.h"
 #include "rtos.h"
 #include "sio_serialIO.h"
-#include "sio_serialIO.h"
 #include "siu_siuPortDriver.h"
 #include "stm_systemTimer.h"
+#include "tds_taskDigSignature.h"
 #include "typ_types.h"
 #include "xbs_crossbarSwitch.h"
 
@@ -121,10 +121,17 @@ enum
         fallback a regular 1-ms-timer event. */
     idEvProcRxCcp,
 
+    /** Event processor activating the verification task for the digital signature in the
+        authentication. */
+    idEvProcDigitalSignature,
+
     /** The number of event processors to register. */
     noRegisteredEvProcs
 };
-_Static_assert(CCP_ID_EV_PROC_RX_CRO == idEvProcRxCcp, "Inconsistency in public interface");
+_Static_assert( CCP_ID_EV_PROC_RX_CRO == idEvProcRxCcp
+                &&  CCP_ID_EV_PROC_DIG_SIGNATURE == idEvProcDigitalSignature
+              , "Inconsistency in public interface"
+              );
 
 
 /** The RTOS uses constant priorities for its event processors, which are defined here.\n
@@ -132,7 +139,8 @@ _Static_assert(CCP_ID_EV_PROC_RX_CRO == idEvProcRxCcp, "Inconsistency in public 
     implicitly inherits the priority of the event processor it is associated with. */
 enum
 {
-    prioEv1000ms = 1,
+    prioEvDigitalSignature = 1,
+    prioEv1000ms,
     prioEv100ms,
     prioEv10ms,
     prioEv1ms,
@@ -541,6 +549,7 @@ int /* _Noreturn */ main(int noArgs ATTRIB_DBG_ONLY, const char *argAry[] ATTRIB
                                     , /* tiFirstInMs */ 0
                                     , CCP_TASK_CCP_RX_CRO__MASK_EV_1MS
                                     )
+    CREATE_EV_PROC(DigitalSignature)
 
     /* OS task are created first. This ensures that they will get the CPU first if the
        event processor is shared with user tasks. */
@@ -557,11 +566,12 @@ int /* _Noreturn */ main(int noArgs ATTRIB_DBG_ONLY, const char *argAry[] ATTRIB
 
     /* User tasks in the QM process are created last. They will be served latest if the
        event processor is shared with OS or safety tasks. */
-// TODO User and safety task must not share the event processor of highest priority. This will allow locking the safety task of highest priority and bit breaks the safety concept
+// TODO User and safety task must not share the event processor of highest priority. This will allow locking the safety task of highest priority and it breaks the safety concept
     CREATE_USER_TASK(idEvProc1ms, bsw_pidUser, bsw_taskUser1ms)
     CREATE_USER_TASK(idEvProc10ms, bsw_pidUser, bsw_taskUser10ms)
     CREATE_USER_TASK(idEvProc100ms, bsw_pidUser, bsw_taskUser100ms)
     CREATE_USER_TASK(idEvProc1000ms, bsw_pidUser, bsw_taskUser1000ms)
+    CREATE_USER_TASK(idEvProcDigitalSignature, bsw_pidUser, tds_taskDigitalSignature)
 
     /* The last check ensures that we didn't forget to register an event processor. */
     assert(idEvProc == noRegisteredEvProcs-1);

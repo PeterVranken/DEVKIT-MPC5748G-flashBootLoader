@@ -93,7 +93,7 @@
     specific. It impacts the build-up of the kernel instance data set, which needs to be
     identical on all cores. You will need to specify the maximum of what is required on all
     cores. */
-#define RTOS_MAX_NO_EVENT_PROCESSORS            5
+#define RTOS_MAX_NO_EVENT_PROCESSORS            6
 
 /** The maximum, total number of user tasks, which can be activated by an event processor.
     The chosen number is a compile time configuration setting and there are no constraints
@@ -104,7 +104,7 @@
       @remark The maximum number of tasks is not core specific. It impacts the build-up of
     the kernel instance data set, which needs to be identical on all cores. You will need
     to specify the maximum of what is required on all cores. */
-#define RTOS_MAX_NO_TASKS                       11
+#define RTOS_MAX_NO_TASKS                       12
 
 /** The MPC5748G has 16 PIT timer channels, which can be used to clock the RTOS. The choice
     is made a configuration item because the PIT timers may be used for particular I/O

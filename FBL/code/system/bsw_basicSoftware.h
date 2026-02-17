@@ -75,7 +75,7 @@
 
 /** This is an argument to function rtos_suspendAllTasksByPriority(). It would then shape a
     critical section between all user tasks 10 ms and slower. */
-#define BSW_PRIO_USER_TASK_10MS             3u
+#define BSW_PRIO_USER_TASK_10MS             4u
 
 /*
  * Global type definitions
