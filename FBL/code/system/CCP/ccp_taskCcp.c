@@ -153,8 +153,9 @@ enum ccpCmdResponseCode_t
 /** The diagnostic service numbers in use. */
 enum diagServiceNum_t
 {
-    diagSN_uploadVersionFbl = 0x00u,
-    diagSN_uploadSeed = 0x01u,
+    diagSN_uploadSeed = 0x00u,
+    diagSN_uploadVersionFbl = 0x01u,
+    diagSN_resetEcu = 0x02u,
 };
 
 /** The action service numbers in use. */
@@ -251,11 +252,11 @@ static struct ccpFsm_t
 /** The authentication state. */
 static enum
 {
-    stKey_noAuthentificationYet,
+    stKey_noAuthenticationYet,
     stKey_authenticationFailed,
     stKey_authentified,
 
-} _stateAuthentication SECTION(.data.OS._stateAuthentication) = stKey_noAuthentificationYet;
+} _stateAuthentication SECTION(.data.OS._stateAuthentication) = stKey_noAuthenticationYet;
 
 /*
  * Function implementation
@@ -266,7 +267,7 @@ static enum
  */
 static inline void resetAuthentication(void)
 {
-    _stateAuthentication = stKey_noAuthentificationYet;
+    _stateAuthentication = stKey_noAuthenticationYet;
     memset(&tds_authenticationData, 0, sizeof(tds_authenticationData));
 
 } /* resetAuthentication */
@@ -325,7 +326,7 @@ static bool checkForDownloadKey()
        the key download has completed. If the client uses another download pattern then bad
        luck, authentication will fail, which is not our problem.
          1st term in condition: We allow only one attempt per session. */
-    if(_stateAuthentication == stKey_noAuthentificationYet
+    if(_stateAuthentication == stKey_noAuthenticationYet
        && _ccpFsm.mta0
           == (uint32_t)&tds_authenticationData.keyAry[TDS_SIZE_OF_AUTHENTICATION_KEY]
       )
@@ -366,12 +367,15 @@ static inline bool isServiceResponseAddress(bool isUpload, uint32_t address, uin
     return isUpload
            && (address >= (uint32_t)&bsw_version[0]
                && endAddr <= (uint32_t)&bsw_version[bsw_sizeOfVersion]
-               || address >= (uint32_t)&tds_authenticationData.seed
+               && _stateAuthentication == stKey_authentified
+               ||  address >= (uint32_t)&tds_authenticationData.seed
                    && endAddr <= (uint32_t)&tds_authenticationData.seed
                                   + sizeof(tds_authenticationData.seed)
                                   + sizeof(tds_authenticationData.addrOfKey)
+                   && _stateAuthentication == stKey_noAuthenticationYet
               )
            || !isUpload
+              && _stateAuthentication == stKey_noAuthenticationYet
               && (address >= (uint32_t)&tds_authenticationData.keyAry[0]
                   && endAddr <= (uint32_t)&tds_authenticationData.keyAry[0]
                                  + sizeof(tds_authenticationData.keyAry)
@@ -667,6 +671,7 @@ static void finishDisconnect(void)
     else
         reponseCode = ccpCmdRespCode_paramOutOfRange;
 
+    _ccpFsm.mta0 = 0u;
     _ccpFsm.state = ccp_stateFsm_idle;
 
     #if VERBOSE >= 1
@@ -712,8 +717,9 @@ static void onSetMta(void)
     const bool isMta0 = _ccpFsm.croMsg.payload[2] == 0u;
     const uint32_t addr = readU32FromCro(/*idxFirstByte*/ 4u);
     const bool isValidAddr = addrExt == 0u
-                             && (rom_isValidFlashAddressRange(addr, 1u)
-                                 || isServiceResponseAddress(/*isUpload*/ false, addr, 1u)
+                             && (isServiceResponseAddress(/*isUpload*/ false, addr, 1u)
+                                 ||  rom_isValidFlashAddressRange(addr, 1u)
+                                     && _stateAuthentication == stKey_authentified
                                 );
 
     unsigned int reponseCode;
@@ -782,6 +788,7 @@ static void onUpload(void)
     const bool isValidAddrRange = rom_isValidFlashAddressRange( _ccpFsm.mta0
                                                               , _ccpFsm.noBytesToProcess
                                                               )
+                                  &&  _stateAuthentication == stKey_authentified
                                   || isServiceResponseAddress( /*isUpload*/ true
                                                              , _ccpFsm.mta0
                                                              , _ccpFsm.noBytesToProcess
@@ -878,7 +885,6 @@ static void onDownload(bool isDownload6)
 
     /* Our only supported use-case for the download is providing data to some diagnostic or
        action service. */
-#warning check what happens if MTA not set by client. Is it guaranteed that it will always point to invalid memory? Is it invalidated on CONNECT and DISCONNECT?
     const bool isValidAddrRange = isServiceResponseAddress( /*isUpload*/ false
                                                           , _ccpFsm.mta0
                                                           , _ccpFsm.noBytesToProcess
@@ -960,7 +966,8 @@ static void onClearMemory(void)
     _ccpFsm.noBytesToProcess = readU32FromCro(/*idxFirstByte*/ 2u);
     const bool isValidAddrRange = rom_isValidFlashAddressRange( _ccpFsm.mta0
                                                               , _ccpFsm.noBytesToProcess
-                                                              );
+                                                              )
+                                  &&  _stateAuthentication == stKey_authentified;
     if(isValidAddrRange)
     {
         /* If we had already written some data to program to the API of the flash ROM
@@ -1066,7 +1073,8 @@ static void onProgram(bool isProgram6)
     }
     const bool isValidAddrRange = rom_isValidFlashAddressRange( _ccpFsm.mta0
                                                               , _ccpFsm.noBytesToProcess
-                                                              );
+                                                              )
+                                  &&  _stateAuthentication == stKey_authentified;
     if(isValidAddrRange  &&  (isProgram6 || _ccpFsm.noBytesToProcess <= 5u))
     {
         if(isFlashDriverReady())
@@ -1106,16 +1114,15 @@ static void onDiagService(void)
 
     enum ccpCmdResponseCode_t reponseCode = ccpCmdRespCode_noError;
     uint8_t noResponseBytes;
-    if(serviceNo == diagSN_uploadVersionFbl)
-    {
-        /* The MTA is set to where the response has to be uploaded from. */
-        _ccpFsm.mta0 = (uint32_t)&bsw_version[0];
-        noResponseBytes = bsw_sizeOfVersion;
-    }
-    else if(serviceNo == diagSN_uploadSeed)
+    if(serviceNo == diagSN_uploadSeed  &&  _stateAuthentication == stKey_noAuthenticationYet)
     {
         /* Choose a new, random seed value. */
-        tds_authenticationData.seed = 0x01020304;//stm_osGetSystemTime(/*idxTimer*/ 0u);
+        uint32_t seed = stm_osGetSystemTime(/*idxTimer*/ 0u);
+        seed ^= (seed << 7);
+        seed ^= (seed >> 13);
+        seed ^= (seed << 11);
+        seed = (seed * 0xA5A5A5A5u) ^ 0x3C6EF372u;
+        tds_authenticationData.seed = seed;
 
         /* Provide the CCP UPLOAD address to the CCP client together with the seed. (The
            upload size is implicit to the chosen crypto algorithm.) */
@@ -1123,6 +1130,14 @@ static void onDiagService(void)
         _ccpFsm.mta0 = (uint32_t)&tds_authenticationData.seed;
         noResponseBytes = sizeof(tds_authenticationData.seed)
                           + sizeof(tds_authenticationData.addrOfKey);
+    }
+    else if(serviceNo == diagSN_uploadVersionFbl
+            &&  _stateAuthentication == stKey_authentified
+           )
+    {
+        /* The MTA is set to where the response has to be uploaded from. */
+        _ccpFsm.mta0 = (uint32_t)&bsw_version[0];
+        noResponseBytes = bsw_sizeOfVersion;
     }
     else
     {
@@ -1163,6 +1178,7 @@ static void onRxCroMsg(void)
                 #if VERBOSE >= 1
                 iprintf("Connected with CCP client.\r\n");
                 #endif
+                _ccpFsm.mta0 = 0u;
                 resetAuthentication();
                 _ccpFsm.state = ccp_stateFsm_connected;
                 finalizeDtoMsg(ccpCmdRespCode_noError);
