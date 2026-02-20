@@ -24,6 +24,8 @@
  * Include files
  */
 
+#include <stdint.h>
+#include <typ_types.h>
 
 /*
  * Defines
@@ -39,6 +41,9 @@
  * Global data declarations
  */
 
+/** Flag, to let the OS code initiate a restart of the application. 0: No action, 1: SW
+    reset. */
+extern uint8_t SDATA_P1(apt_restartApp);
 
 /*
  * Global prototypes

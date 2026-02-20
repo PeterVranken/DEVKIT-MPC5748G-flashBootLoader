@@ -85,6 +85,17 @@
 #define ENABLE_CPU1     0x0008
 #define ENABLE_CPU2     0x0001
 
+/** SPR index of Machine Check Syndrome Register. */
+#define SPR_MCSR        572
+
+/* Address of Destructive Event Status Register, RM 55.3.1., pp.2790ff. */
+#define MC_RGM_DES      0xFFFA8000
+
+/* Address of Functional Event Status Register, RM 55.3.3., pp.2794ff. */
+#define MC_RGM_FES      0xFFFA8300
+
+/* Mask of bits in MCSR, which indicate an occured MC exception. See RM 59.5.3, pp.2899ff. */
+#define MASK_MCSR_MC    0xDF9FE79E
 
 /*
  * External function declarations
@@ -173,7 +184,7 @@ sup_bafData:
     .extern     ld_stackEndOSCore0  /* End address or top of OS stack on core Z4A. */
     .extern     ld_stackEndOSCore1  /* End address or top of OS stack on core Z4B. */
     .extern     ld_stackEndOSCore2  /* End address or top of OS stack on core Z2. */
-    
+
     .global     sup_startUp
     .p2align    2
 sup_startUp:
@@ -193,13 +204,72 @@ sup_startUp:
     se_cmpli    r3, 1               /* Next steps only once by first core, which is 0 */
     se_bge      su_endInitWDAndRam
 
-#ifdef DEBUG
-    /* Disable the destructive reset for development. */
+    /* Disable the reset escalation, functional always, destructive for development. */
     e_lis       r4, 0xfffa8608@ha   /* fffa8608 = 'Destructive' Reset Escalation Threshold */
     se_li       r5, 0               /* Register (MC_RGM_DRET) */
+#ifdef DEBUG
     e_stb       r5, 0xfffa8608@l(r4)/* DRET = 0: Disable escalation of destructive resets */
 #endif
-    e_bl        disableWatchdogs    /* The watchdogs are disabled now */
+    /* For the FBL, it is normal operation to have functional resets. We disable the
+       functional reset escalation. */
+    e_stb       r5, 0xfffa8604@l(r4)/* FRET = 0: Disable escalation of functional resets */
+
+    e_bl        disableWatchdogs    /* The external software watchdogs are disabled now */
+
+#if 1 // Preliminary FBL code starts here
+    /* FBL special: It is controlled by some information written to the very beginning of
+       the RAM. This happens only if it is started by SW reset caused by an application. In
+       case of a power-on reset, the RAM is undefined and must not be read before
+       initialization. Therefore, we first check the reset reason and then read the RAM in
+       case of a SW reset.
+         Note, placing this code here means that the FBL won't execute on core Z7_1. */
+#if (MC_RGM_FES & 0xFFFF0000) != (MC_RGM_DES & 0xFFFF0000)
+# error Implementation expects same base address of both registers, MC_RGM_DES and MC_RGM_FES
+#endif
+    e_lis       r3, MC_RGM_DES@ha   /* Destructive Event Status Register, RM 55.3.1 */
+    e_lwz       r3, MC_RGM_DES@l(r3)/* r3 = MC_RGM_DES */
+    se_li       r29, 0              /* Argument of main in case of POR */
+    se_li       r4, 1               /* Mask for bit 31, F_POR */
+    se_and.     r3, r4              /* r3 holds MC_RGM_DES masked for F_POR; cc reg CR0 set */
+    e_lis       r3, MC_RGM_FES@ha   /* Functional Event Status Register, RM 55.3.3, pp.2794ff*/
+//    e_stw       r4, MC_RGM_DES@l(r3)/* MC_RGM_DES[F_POR] = 0, next reset may be SW reset. */
+//    se_bne      su_zeroizeSRAM      /* Jump on POR, i.e., if Bit 31 is set. */
+    e_lwz       r3, MC_RGM_FES@l(r3)/* r3 = MC_RGM_FES */
+    se_btsti    r3, 28              /* Test bit 28=F_SOFT_FUNC */
+    se_beq      su_zeroizeSRAM      /* Jump on not F_SOFT_FUNC, i.e., if Bit 28 is cleared. */
+
+    /* SW reset: Either the FBL itself at the end of a successful flashing to start the new
+       application or the application to begin a flash process has caused the reset. The
+       reset argument in RAM will tell us, which one it is. */
+    e_lis       r3, ld_memRamStart@h
+    e_or2i      r3, ld_memRamStart@l    /* r3 points to first RAM word. We expect the magic. */
+    se_lwz      r5, 0(r3)           /* r5 = *ld_memRamStart, holds first RAM word. */
+    e_lis       r4, 0xDEADBEEF@h
+    e_or2i      r4, 0xDEADBEEF@l    /* r4 holds the expected magic. */
+    se_cmpl     r5, r4              /* r5 == r4? */
+    se_li       r29, 2              /* Argument of main if bad magic. */
+    se_bne      su_checkMcAfterReadRAM  /* RAM doesn't contain the magic. */
+    se_lwz      r29, 4(r3)          /* r29 = *(ld_memRamStart+4), holds second RAM word.
+                                       This word becomes the argument of main(). */
+su_checkMcAfterReadRAM:
+    /* In pathologic situations, if a SW reset were requested before initialization of the
+       RAM, reading the RAM is not possible without MC exceptions from the bus or ECC
+       logic. We need to double-check if we got such an exception and if so proceed as in
+       the POR situation. */
+    mfspr       r3, SPR_MCSR    /* Read MCSR, Machine Check Syndrom register. All machine
+                                   check related bits need to be cleared. */
+    e_lis       r4, MASK_MCSR_MC@h  /* r4, upper 16 Bit filled with mask of forbidden bits. */
+    e_or2i      r4, MASK_MCSR_MC@l  /* r4 holds mask of bits, which need to be cleared. */
+    se_and.     r3, r4              /* r3 holds MCSR masked for ME bits; cc reg CR0 set. */
+    se_beq      su_zeroizeSRAM  /* No exception, argument of main in r29 is just fine. */
+    mtspr       SPR_MCSR, r4    /* Clear pending exception bits. */
+    se_li       r29, 1          /* Argument main: Error reading RAM. */
+
+    /* Caution, r29 must not be used any more down here till entry into main. It contains
+       the argument of main. */
+su_zeroizeSRAM:
+#endif // FBL code preliminarily inserted by manual merge
+
     e_bl        zeroizeSRAM         /* Clear all RAM to avoid ECC errors */
 su_endInitWDAndRam:
 
@@ -382,7 +452,14 @@ su_loadKernelInstancePtr:
     se_li       r3, 1   /* 1 element in argv, the current processor. */
     se_cmpli    r31, 1
     se_bge      su_main4zBOrZ2
-    e_lis       r5, main@h	/* Fixed main function for Z4A */
+    
+    /* FBL, core 0: The meaning of the arguments of main is changed: We set argc=1 and
+       place our flag in argv[0] - although as a number not as char*. */
+    e_stwu      sp, -16(sp) /* A stack frame. EABI wants only multiple of 8 and we need
+                               room for the storage of LR on entry into main. */
+    se_stw      r29, 8(sp)  /* The only entry of main's argv. */
+    e_add16i    r4, sp, 8   /* Address of this entry is 2nd function argument. */
+    e_lis       r5, main@h  /* Fixed main function for Z4A */
     e_or2i      r5, main@l
     se_mtlr     r5
     se_blrl

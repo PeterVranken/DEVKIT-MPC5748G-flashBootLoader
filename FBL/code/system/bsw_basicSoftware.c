@@ -39,6 +39,7 @@
 
 #include "bsw_basicSoftware.h"
 
+#include <stdio.h>
 #include <string.h>
 #include <assert.h>
 
@@ -312,13 +313,23 @@ bsw_osCbOnCANRxCanN(CAN_3)
  *   @param noArgs
  * Number of arguments in \a argAry. Is actually always equal to one.
  *   @param argAry
- * Array of string arguments to the function. Actually, always a single string which equals
- * the name of the core, which is started.
+ * For the FBL, the startup code has been modified such that main receives the boot flag as
+ * only argument, and as a raw number, not as a char*.
  */
-int /* _Noreturn */ main(int noArgs ATTRIB_DBG_ONLY, const char *argAry[] ATTRIB_DBG_ONLY)
+uint32_t bsw_bootFlag = 999;
+int /* _Noreturn */ main(int noArgs ATTRIB_DBG_ONLY, const uint32_t argAry[1])
 {
-    assert(noArgs == 1  && strcmp(argAry[0], "Z4A") == 0);
+    assert(noArgs == 1);
+    bsw_bootFlag = argAry[0];
 
+//    #warning Preliminary test code. Jumps into app at 0x00800010 without validation of boot sector
+//    if(fblFlag == 0xDeafBee)
+//    {
+//        /* The deaf bee indicates that we should immediately branch into a flashed
+//           application. Because we haven't initialized the hardware yet, this can be done
+//           without conflict by jumping directly to the starting address. */     
+//        ((void (*)(void))0x00800010ul)();
+//    }
     /* Complete the core HW initialization - as far as not yet done by the assembly startup
        code. */
 
@@ -435,6 +446,11 @@ int /* _Noreturn */ main(int noArgs ATTRIB_DBG_ONLY, const char *argAry[] ATTRIB
     sio_osWriteSerial(SIO_STR(Configuration: PRODUCTION));
     #endif
 #endif
+    /* Argument of main in case of POR: 0 */
+    /* Argument main in case of error reading RAM: 1 */
+    /* Argument of main if bad magic: 2 */
+    /* Argument of SW reset recognized: 0xDEAFBEE (can be any value set by applciation) */
+    iprintf("main: Got boot flag 0x%08lX\r\n", bsw_bootFlag);
 
     /* Register the process initialization tasks. They are located in the application code. */
     if(rtos_osRegisterInitTask( bsw_taskUserInit
