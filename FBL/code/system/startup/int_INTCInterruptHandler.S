@@ -80,7 +80,7 @@
 
     .macro      macroINTCInterruptHandler core, INTC_IACKR, INTC_EOIR
 /**
- *   @fn int_INTCInterruptHandlerCoreN
+ *   @func int_INTCInterruptHandlerCoreN
  * This is the interrupt handler for the MCU trap #4, External Interrupts. This trap
  * relates to interrupts controlled by the INTC. The INTC provides the vector to the
  * appropriate service function and handles the preemption or mutual exclusion of
@@ -139,10 +139,12 @@ int_endIfPreemptable\core\():
     wrteei      0
 
     /* Write 0 to INTC_EOIR, informing INTC to restore priority as it was on entry to this
-       handler. Note, writing a zero (while any value would succeed) used to be demanded
-       for future for the MPC5643L and is still recommended for the MPC5748G - although
-       much weaker than before. We follow the recommendation even if this means an
-       additional instruction. */
+       handler.
+         Note, writing a zero (while any value would succeed) used to be demanded for
+       future compatibility for the MPC5643L and is still recommended for the MPC5748G -
+       although much weaker than before. The recommendation has not been checked for the
+       MPC5775B. We follow the recommendation even if this means an additional
+       instruction. */
     e_stw       r3, \INTC_EOIR\()@l(r4)    /* Write 0 to INTC_EOIR */
 
     /* Restore all GPRegisters and SPR, which are volatile according to the EABI. */

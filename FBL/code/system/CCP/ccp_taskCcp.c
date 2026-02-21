@@ -68,11 +68,13 @@
 #include <assert.h>
 
 #include "typ_types.h"
+#include "apt_applicationTask.h" // TODO Temporary interface for reset via CLI
 #include "bsw_basicSoftware.h"
 #include "rtos.h"
 #include "cdr_canDriverAPI.h"
 #include "rom_flashRomDriver.h"
 #include "stm_systemTimer.h"
+#include "swr_softwareReset.h"
 #include "tds_taskDigSignature.h"
 
 /*
@@ -1336,7 +1338,15 @@ static void reSubmitCroCmd(void)
  */
 static void onClockTick(void)
 {
-    // TODO Make this another timer method
+// TODO Preliminary interafce to trigger a reset
+    if(apt_restartApp != 0u)
+    {
+        /* The function doesn't reset immediately; it has a count-down so that we can still
+           give some feedback and be able to properly close the CCP session. */
+// TODO The countdown and feeback better belongs here.
+        swr_osSoftwareReset();
+    }
+    
     if(_ccpFsm.tiWaitInMs > 0u)
         -- _ccpFsm.tiWaitInMs;
 

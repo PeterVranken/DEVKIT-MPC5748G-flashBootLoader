@@ -119,6 +119,11 @@ static uint16_t BSS_P1(_cntPrintTime) = 0u;
 /** Status information time output: Period of time printing. */
 static uint16_t BSS_P1(_tiCycleTimeInS) = 0u;
 
+/** Flag, to let the OS code initiate a restart of the application. 0: No action, 1: SW
+    reset. */
+uint8_t SDATA_P1(apt_restartApp) = 0u;
+
+
 /*
  * Function implementation
  */
@@ -299,7 +304,8 @@ static void help()
 #endif
     "version: Print software version designation\r\n"
     "time: Print current time\r\n"
-    "time hour min [sec]: Set current time\r\n";
+    "time hour min [sec]: Set current time\r\n"
+    "reset: A SW reset is triggered by writing to MC_ME_MCTL[KEY]\r\n";
 
     fputs(help, stdout);
 
@@ -505,7 +511,7 @@ int32_t bsw_taskUser10ms(uint32_t PID ATTRIB_DBG_ONLY, uint32_t taskParam ATTRIB
                         _tiCycleTimeInS = 0u;
                     else if(100*tiCycleInS <= UINT16_MAX)
                         _tiCycleTimeInS = (uint16_t)(100*tiCycleInS);
-                else
+                    else
                         _tiCycleTimeInS = 65500u;
 
                     _cntPrintTime = _tiCycleTimeInS > 0u? 1u: 0u;
@@ -555,6 +561,10 @@ int32_t bsw_taskUser10ms(uint32_t PID ATTRIB_DBG_ONLY, uint32_t taskParam ATTRIB
 
                 printCurrTime();
                 _cntPrintTime = _tiCycleTimeInS;
+            }
+            else if(strcmp(argV[0], "reset") == 0)
+            {
+                apt_restartApp = 1u;
             }
             else
             {

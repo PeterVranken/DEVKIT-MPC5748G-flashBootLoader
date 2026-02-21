@@ -1,10 +1,10 @@
-#ifndef APT_APPLICATIONTASK_INCLUDED
-#define APT_APPLICATIONTASK_INCLUDED
+#ifndef SWR_SOFTWARERESET_INCLUDED
+#define SWR_SOFTWARERESET_INCLUDED
 /**
- * @file apt_applicationTask.h
- * Definition of global interface of module apt_applicationTask.c
+ * @file swr_softwareReset.h
+ * Definition of global interface of module swr_softwareReset.c
  *
- * Copyright (C) 2015-2022 Peter Vranken (mailto:Peter_Vranken@Yahoo.de)
+ * Copyright (C) 2026 Peter Vranken (mailto:Peter_Vranken@Yahoo.de)
  *
  * This program is free software: you can redistribute it and/or modify it
  * under the terms of the GNU Lesser General Public License as published by the
@@ -25,7 +25,8 @@
  */
 
 #include <stdint.h>
-#include <typ_types.h>
+#include <stdbool.h>
+
 
 /*
  * Defines
@@ -41,15 +42,17 @@
  * Global data declarations
  */
 
-/** Flag, to let the OS code initiate a restart of the application. 0: No action, 1: SW
-    reset. */
-extern uint8_t SDATA_P1(apt_restartApp);
 
 /*
  * Global prototypes
  */
 
-/* Format the current time in printable format. */
-void apt_printCurrTime(char msgTime[], unsigned int sizeOfMsgTime);
+/* Start the countdown till a functional reset. */
+void swr_osSoftwareReset(void);
 
-#endif  /* APT_APPLICATIONTASK_INCLUDED */
+/*
+ * Global inline functions
+ */
+
+
+#endif  /* SWR_SOFTWARERESET_INCLUDED */

@@ -72,8 +72,8 @@ cfl_configureFlash:
     e_stw       r0, 28(sp)
     
     /* Load the required four movable instructions into r8..r10. */
-    e_lis       r10, cfl_movalbeMachineCode@ha
-    e_add16i    r10, r10, cfl_movalbeMachineCode@l
+    e_lis       r10, cfl_movableMachineCode@ha
+    e_add16i    r10, r10, cfl_movableMachineCode@l
     e_lwz       r8, 0(r10)
     e_lwz       r9, 4(r10)
     e_lwz       r10, 8(r10)
@@ -83,12 +83,12 @@ cfl_configureFlash:
     e_stw       r9, 12(sp)
     e_stw       r10, 16(sp)
     
-    /* mbar: We need a memory barrier here to have everything in RAM before we branch
-       there and before we read any code from there.
-         isync: Force re-reading instructions after changeing code. Required because
-       look-ahead instruction fetching may have picked other bytes. */
-    mbar
-    se_isync
+    /* We put a memory barrier here to surely have everything in RAM before we read the
+       first instruction there. */
+    msync       /* Accomplish transaction */
+    se_isync    /* Force re-reading instructions after changeing the code section.
+                   Look-ahead instruction fetching may have picked invalid earlier
+                   contents. */
     
     /* Load pointer to function on the stack into the counter register. */
     e_la        r9, 8(sp)
@@ -132,23 +132,24 @@ cfl_configureFlash:
                                        (no prefetch on data fetch), P1_PFLIM=10b, prefetch on
                                        miss or hit, P1_BFEN=1 (line buffer enable) */
     se_addi     r4, 4               /* PFLASH_BASE: 0xFC030000, PFCR2: Offset 4 */
+    se_bctrl                        /* Call sub-routine in RAM to do register write operation */
     
-    /* Call sub-routine, which is in the stack area. */
-    se_bctrl
-    
+    /* Destroy stack frame and return. */
     e_lwz       r0, 28(sp)
     mtlr        r0
     e_la        sp, 24(sp)
     se_blr
 
     .p2align    2
-cfl_movalbeMachineCode:
+    .global     cfl_movableMachineCode, cfl_endMovableMachineCode
+cfl_movableMachineCode:
     e_stw       r3, 0(r4)
     msync                   /* Accomplish transaction before return to flash. */
-    se_isync                /* Force re-reading instructions after changeing flash
-                               controller settings. Read next instuctions using new
-                               settings. */
+    se_isync                /* Force re-reading instructions after change of flash access
+                               parameters. */
     se_blr
+    
+cfl_endMovableMachineCode:
 
 /* End of cfl_configureFlash */
 
