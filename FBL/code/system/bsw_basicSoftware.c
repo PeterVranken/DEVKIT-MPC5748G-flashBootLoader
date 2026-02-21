@@ -314,7 +314,12 @@ bsw_osCbOnCANRxCanN(CAN_3)
  * Number of arguments in \a argAry. Is actually always equal to three.
  *   @param argAry
  * For the FBL, the startup code has been modified such that main receives the boot flag as
- * only argument, and as a raw number, not as a char*.
+ * first argument in \a argAry, followed by the values of registers MC_RGM_DES and MC_RGM_FES,  * in this order.\n
+ *   On entry, the device registers MC_RGM_DES and MC_RGM_FES have already been cleared, so
+ * that they are prepared to take the information of the next reset. (HW will only change
+ * bits from 0 to 1 but never update an already set bit.) Therefore, it is useful get the
+ * register values from exit of the reset procedure.\n
+ *   Note, all application arguments are delivered as raw numbers, not as text or char*.
  */
 uint32_t bsw_bootFlag = 999
        , MC_RGM_DES = 0x999

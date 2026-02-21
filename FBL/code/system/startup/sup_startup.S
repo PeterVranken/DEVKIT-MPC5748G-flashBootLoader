@@ -204,7 +204,8 @@ sup_startUp:
     se_cmpli    r3, 1               /* Next steps only once by first core, which is 0 */
     se_bge      su_endInitWDAndRam
 
-    /* Disable the reset escalation, functional always, destructive for development. */
+    /* Disable the reset escalation, functional always (required by FBL), destructive for
+       development. */
     e_lis       r4, 0xfffa8608@ha   /* fffa8608 = 'Destructive' Reset Escalation Threshold */
     se_li       r5, 0               /* Register (MC_RGM_DRET) */
 #ifdef DEBUG
@@ -216,25 +217,21 @@ sup_startUp:
 
     e_bl        disableWatchdogs    /* The external software watchdogs are disabled now */
 
-#if 1 // Preliminary FBL code starts here
-    /* FBL special: It is controlled by some information written to the very beginning of
-       the RAM. This happens only if it is started by SW reset caused by an application. In
-       case of a power-on reset, the RAM is undefined and must not be read before
-       initialization. Therefore, we first check the reset reason and then read the RAM in
-       case of a SW reset.
-         Note, placing this code here means that the FBL won't execute on core Z7_1. */
-#if (MC_RGM_FES & 0xFFFF0000) != (MC_RGM_DES & 0xFFFF0000)
-# error Implementation expects same base address of both registers, MC_RGM_DES and MC_RGM_FES
-#endif
+    /* FBL specific code comes here: It is controlled by some information written to the
+       very beginning of the RAM. This happens only if it is started by SW reset caused by
+       an application. In case of a power-on reset, the RAM is undefined and must not be
+       read before initialization. Therefore, we first check the reset reason and then read
+       the RAM in case of a SW reset. Note, placing this code here means that the FBL won't
+       execute on core Z7_1. */
+    e_lis       r3, MC_RGM_DES@ha   /* Destructive Event Status Register, RM 55.3.1 */
+    e_lwz       r3, MC_RGM_DES@l(r3)/* r3 = MC_RGM_DES */
+    se_cmpi     r3, 0               /* Compare with zero, DES needs to have not bit set */
+    se_bne      su_zeroizeSRAM      /* Jump on any bit in DES set */
     e_lis       r3, MC_RGM_FES@ha   /* Functional Event Status Register, RM 55.3.3, pp.2794ff*/
     e_lwz       r3, MC_RGM_FES@l(r3)/* r3 = MC_RGM_FES */
     se_li       r29, 0              /* Argument of main in case of non-sw reset */
     se_li       r4, 8               /* Mask for bit 31, F_POR */
     se_and.     r3, r4              /* r3 holds MC_RGM_DES masked for F_POR; cc reg CR0 set */
-//    e_stw       r4, MC_RGM_DES@l(r3)/* MC_RGM_DES[F_POR] = 0, next reset may be SW reset. */
-//    se_bne      su_zeroizeSRAM      /* Jump on POR, i.e., if Bit 31 is set. */
-//    e_lwz       r3, MC_RGM_FES@l(r3)/* r3 = MC_RGM_FES */
-//    se_btsti    r3, 28              /* Test bit 28=F_SOFT_FUNC */
     se_beq      su_zeroizeSRAM      /* Jump on not F_SOFT_FUNC, i.e., if Bit 28 is cleared. */
 
     /* SW reset: Either the FBL itself at the end of a successful flashing to start the new
@@ -246,16 +243,19 @@ sup_startUp:
     e_lis       r4, 0xDEADBEEF@h
     e_or2i      r4, 0xDEADBEEF@l    /* r4 holds the expected magic. */
     se_cmpl     r5, r4              /* r5 == r4? */
-    se_li       r29, 2              /* Argument of main if bad magic. */
+    se_li       r29, 2              /* 1st Argument of main if bad magic. */
     se_bne      su_checkMcAfterReadRAM  /* RAM doesn't contain the magic. */
     se_lwz      r29, 4(r3)          /* r29 = *(ld_memRamStart+4), holds second RAM word.
-
-This word becomes the argument of main(). */
+                                       This word becomes the 1st argument of main(). */
 su_checkMcAfterReadRAM:
     /* In pathologic situations, if a SW reset were requested before initialization of the
        RAM, reading the RAM is not possible without MC exceptions from the bus or ECC
        logic. We need to double-check if we got such an exception and if so proceed as in
-       the POR situation. */
+       the POR situation.
+         Note, it turned out that this code doesn't really help. The exceptions caused by
+       destroyed RAM raise non-maskable machine check exceptions and this code here won't
+       be executed any more - and despite of MSR[ME] = 0. (We leave the code since it
+       doesn't harm neither and it may still catch other, minor failures.) */ 
     mfspr       r3, SPR_MCSR    /* Read MCSR, Machine Check Syndrom register. All machine
                                    check related bits need to be cleared. */
     e_lis       r4, MASK_MCSR_MC@h  /* r4, upper 16 Bit filled with mask of forbidden bits. */
@@ -268,7 +268,7 @@ su_checkMcAfterReadRAM:
     /* Caution, r29 must not be used any more down here till entry into main. It contains
        the argument of main. */
 su_zeroizeSRAM:
-#endif // FBL code preliminarily inserted by manual merge
+    /* End of FBL specific code. */
 
     e_bl        zeroizeSRAM         /* Clear all RAM to avoid ECC errors */
 su_endInitWDAndRam:
@@ -447,13 +447,13 @@ su_loadKernelInstancePtr:
     se_mr       r3, r31 /* r31 = SPR 286 = PIR, processor ID */
     se_cmpli    r31, 1
     se_bge      su_main4zBOrZ2
-#warning Cleanup of stack frame if main should return!
-    /* FBL, core 0: The meaning of the arguments of main is changed: We set argc=3 and
-       place our flag in argv[0], followed by MC_RGM_DES and MC_RGM_FES - although as a
-       number not as char*. We need to provide the two registers to the application,
-       because we need to clear them now: The reset reason bits are sticky and collected
-       accross several resets. The information about the last recent reset is available
-       only if we clear them every time. */
+
+    /* FBL, core 0: The meaning of the arguments of main is different to the other cores:
+       We set argc=3 and place our flag in argv[0], followed by MC_RGM_DES and MC_RGM_FES -
+       although as a number not as char*. We need to provide the two registers to the
+       application, because we need to clear them now: The reset reason bits are sticky and
+       collected across several resets. The information about the last recent reset is
+       available only if we clear them every time. */
     e_stwu      sp, -24(sp) /* A stack frame. EABI wants only multiple of 8 and we need
                                room for the storage of LR on entry into main. */
     se_stw      r29, 8(sp)  /* 1st entry of main's argv: boot flag */
@@ -472,6 +472,7 @@ su_loadKernelInstancePtr:
     e_or2i      r5, main@l
     se_mtlr     r5
     se_blrl
+    se_addi     sp, 24      /* Remove stack frame after use. */
     se_b        su_endMain
 su_main4zBOrZ2:
     se_slwi     r3, 2   /* Pointer offset: * sizeof(char*) */
