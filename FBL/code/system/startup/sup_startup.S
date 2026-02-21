@@ -226,16 +226,15 @@ sup_startUp:
 #if (MC_RGM_FES & 0xFFFF0000) != (MC_RGM_DES & 0xFFFF0000)
 # error Implementation expects same base address of both registers, MC_RGM_DES and MC_RGM_FES
 #endif
-    e_lis       r3, MC_RGM_DES@ha   /* Destructive Event Status Register, RM 55.3.1 */
-    e_lwz       r3, MC_RGM_DES@l(r3)/* r3 = MC_RGM_DES */
-    se_li       r29, 0              /* Argument of main in case of POR */
-    se_li       r4, 1               /* Mask for bit 31, F_POR */
-    se_and.     r3, r4              /* r3 holds MC_RGM_DES masked for F_POR; cc reg CR0 set */
     e_lis       r3, MC_RGM_FES@ha   /* Functional Event Status Register, RM 55.3.3, pp.2794ff*/
+    e_lwz       r3, MC_RGM_FES@l(r3)/* r3 = MC_RGM_FES */
+    se_li       r29, 0              /* Argument of main in case of non-sw reset */
+    se_li       r4, 8               /* Mask for bit 31, F_POR */
+    se_and.     r3, r4              /* r3 holds MC_RGM_DES masked for F_POR; cc reg CR0 set */
 //    e_stw       r4, MC_RGM_DES@l(r3)/* MC_RGM_DES[F_POR] = 0, next reset may be SW reset. */
 //    se_bne      su_zeroizeSRAM      /* Jump on POR, i.e., if Bit 31 is set. */
-    e_lwz       r3, MC_RGM_FES@l(r3)/* r3 = MC_RGM_FES */
-    se_btsti    r3, 28              /* Test bit 28=F_SOFT_FUNC */
+//    e_lwz       r3, MC_RGM_FES@l(r3)/* r3 = MC_RGM_FES */
+//    se_btsti    r3, 28              /* Test bit 28=F_SOFT_FUNC */
     se_beq      su_zeroizeSRAM      /* Jump on not F_SOFT_FUNC, i.e., if Bit 28 is cleared. */
 
     /* SW reset: Either the FBL itself at the end of a successful flashing to start the new
@@ -250,7 +249,8 @@ sup_startUp:
     se_li       r29, 2              /* Argument of main if bad magic. */
     se_bne      su_checkMcAfterReadRAM  /* RAM doesn't contain the magic. */
     se_lwz      r29, 4(r3)          /* r29 = *(ld_memRamStart+4), holds second RAM word.
-                                       This word becomes the argument of main(). */
+
+This word becomes the argument of main(). */
 su_checkMcAfterReadRAM:
     /* In pathologic situations, if a SW reset were requested before initialization of the
        RAM, reading the RAM is not possible without MC exceptions from the bus or ECC
@@ -445,26 +445,40 @@ su_loadKernelInstancePtr:
     /* Calling main: Load EABI function argument registers with argc=1, argv[0]=processor
        name. */
     se_mr       r3, r31 /* r31 = SPR 286 = PIR, processor ID */
-    se_slwi     r3, 2   /* Pointer offset: * sizeof(char*) */
-    e_lis       r4, su_argv@ha
-    e_add16i    r4, r4, su_argv@l
-    se_add      r4, r3
-    se_li       r3, 1   /* 1 element in argv, the current processor. */
     se_cmpli    r31, 1
     se_bge      su_main4zBOrZ2
-    
-    /* FBL, core 0: The meaning of the arguments of main is changed: We set argc=1 and
-       place our flag in argv[0] - although as a number not as char*. */
-    e_stwu      sp, -16(sp) /* A stack frame. EABI wants only multiple of 8 and we need
+#warning Cleanup of stack frame if main should return!
+    /* FBL, core 0: The meaning of the arguments of main is changed: We set argc=3 and
+       place our flag in argv[0], followed by MC_RGM_DES and MC_RGM_FES - although as a
+       number not as char*. We need to provide the two registers to the application,
+       because we need to clear them now: The reset reason bits are sticky and collected
+       accross several resets. The information about the last recent reset is available
+       only if we clear them every time. */
+    e_stwu      sp, -24(sp) /* A stack frame. EABI wants only multiple of 8 and we need
                                room for the storage of LR on entry into main. */
-    se_stw      r29, 8(sp)  /* The only entry of main's argv. */
-    e_add16i    r4, sp, 8   /* Address of this entry is 2nd function argument. */
+    se_stw      r29, 8(sp)  /* 1st entry of main's argv: boot flag */
+    e_lis       r3, MC_RGM_DES@h    /* Destructive Event Status Register, RM 55.3.1 */
+    e_or2i      r3, MC_RGM_DES@l    /* Address MC_RGM_DES in r3. */    
+    se_lwz      r4, 0(r3)   /* r4 = MC_RGM_DES */
+    se_stw      r4, 12(sp)  /* 2nd entry of main's argv: MC_RGM_DES */
+    e_lwz       r4, (MC_RGM_FES-MC_RGM_DES)(r3) /* r4 = MC_RGM_FES, RM 55.3.3, pp.2794ff*/
+    se_stw      r4, 16(sp)  /* 3rd entry of main's argv: MC_RGM_FES */
+    e_li        r4, 0xFFFFFFFF  /* r4 = Bit mask 0xFFFFFFFF, matching all status bits. */
+    se_stw      r4, 0(r3)   /* All status bits in MC_RGM_DES cleared. */
+    e_stw       r4, (MC_RGM_FES-MC_RGM_DES)(r3) /* All status bits in MC_RGM_FES cleared. */
+    se_li       r3, 3       /* 3 elements in argv, is 1st function argument. */
+    e_add16i    r4, sp, 8   /* Address of 1st entry is 2nd function argument. */
     e_lis       r5, main@h  /* Fixed main function for Z4A */
     e_or2i      r5, main@l
     se_mtlr     r5
     se_blrl
     se_b        su_endMain
 su_main4zBOrZ2:
+    se_slwi     r3, 2   /* Pointer offset: * sizeof(char*) */
+    e_lis       r4, su_argv@ha
+    e_add16i    r4, r4, su_argv@l
+    se_add      r4, r3
+    se_li       r3, 1   /* 1 element in argv, the name of the current processor. */
     se_bgt      su_mainZ2
     e_lis       r5, sup_main_Z4B@ha
     e_lwz       r5, sup_main_Z4B@l(r5)

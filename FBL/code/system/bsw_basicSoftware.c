@@ -311,17 +311,20 @@ bsw_osCbOnCANRxCanN(CAN_3)
  * Actually, the function is a _Noreturn. We don't declare it as such in order to avoid a
  * compiler warning.
  *   @param noArgs
- * Number of arguments in \a argAry. Is actually always equal to one.
+ * Number of arguments in \a argAry. Is actually always equal to three.
  *   @param argAry
  * For the FBL, the startup code has been modified such that main receives the boot flag as
  * only argument, and as a raw number, not as a char*.
  */
-uint32_t bsw_bootFlag = 999;
-int /* _Noreturn */ main(int noArgs ATTRIB_DBG_ONLY, const uint32_t argAry[1])
+uint32_t bsw_bootFlag = 999
+       , MC_RGM_DES = 0x999
+       , MC_RGM_FES = 0x999;
+int /* _Noreturn */ main(int noArgs ATTRIB_DBG_ONLY, const uint32_t argAry[3])
 {
-    assert(noArgs == 1);
+    assert(noArgs == 3);
     bsw_bootFlag = argAry[0];
-
+    MC_RGM_DES = argAry[1];
+    MC_RGM_FES = argAry[2];
 //    #warning Preliminary test code. Jumps into app at 0x00800010 without validation of boot sector
 //    if(fblFlag == 0xDeafBee)
 //    {
@@ -446,11 +449,6 @@ int /* _Noreturn */ main(int noArgs ATTRIB_DBG_ONLY, const uint32_t argAry[1])
     sio_osWriteSerial(SIO_STR(Configuration: PRODUCTION));
     #endif
 #endif
-    /* Argument of main in case of POR: 0 */
-    /* Argument main in case of error reading RAM: 1 */
-    /* Argument of main if bad magic: 2 */
-    /* Argument of SW reset recognized: 0xDEAFBEE (can be any value set by applciation) */
-    iprintf("main: Got boot flag 0x%08lX\r\n", bsw_bootFlag);
 
     /* Register the process initialization tasks. They are located in the application code. */
     if(rtos_osRegisterInitTask( bsw_taskUserInit
@@ -618,6 +616,11 @@ int /* _Noreturn */ main(int noArgs ATTRIB_DBG_ONLY, const uint32_t argAry[1])
            of the rest of the code in the idle loop. */
         bsw_cpuLoad = gsl_osGetSystemLoad();
 
+    /* Argument of main in case of POR: 0 */
+    /* Argument main in case of error reading RAM: 1 */
+    /* Argument of main if bad magic: 2 */
+    /* Argument of SW reset recognized: 0xDEAFBEE (can be any value set by applciation) */
+    iprintf("main: Got boot flag 0x%08lX, DES: 0x%08lX, FES: 0x%08lX\r\n", bsw_bootFlag, MC_RGM_DES, MC_RGM_FES);
     } /* End of infinite idle loop of RTOS. */
 
     /* We never get here. Just to avoid a compiler warning. */
