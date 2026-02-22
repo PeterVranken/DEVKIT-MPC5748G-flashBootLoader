@@ -1,7 +1,7 @@
 /*
  * GNU GCC Memory map for Freescale MPC5748G
  *
- * Copyright (C) 2017-2022 Peter Vranken (mailto:Peter_Vranken@Yahoo.de)
+ * Copyright (C) 2017-2026 Peter Vranken (mailto:Peter_Vranken@Yahoo.de)
  *
  * This program is free software: you can redistribute it and/or modify it
  * under the terms of the GNU Lesser General Public License as published by the
@@ -46,21 +46,6 @@ ld_stackSizeP4Core0 = 0;
 ld_stackSizeP4Core1 = 0;
 ld_stackSizeP4Core2 = 0;
 
-/* Definition of memory regions using absolute addresses of physical memories. The symbols
-   with segment start addresses and sizes have already been defined in another linker
-   script and depending on the build target, RAM or flash ROM. */
-MEMORY
-{
-    /* RM, sec. 3.2: f8c000 is the first inspected boot sector. However, this area
-       is marked "Small HSM Code Block". According to RM, 3.3, table 3-2, f90000 is the
-       beginning of the generally usable flash ROM and it's at the same time the second
-       boot sector. */
-    memBoot(rx):  org = ld_textSegStartAddr, len = 0x18
-    memFlash(rx): org = ld_textSegStartAddr + LENGTH(memBoot),
-                        len = ld_textSegSize - LENGTH(memBoot)
-    memData(rwx): org = ld_dataSegStartAddr, len = ld_dataSegSize
-}
-
 /* Export the location of the physical storage space as far as required by the startup
    code. */
 ld_memRamStart = ORIGIN(memData);
@@ -69,11 +54,14 @@ ld_memRamEnd = ld_memRamStart + ld_memRamSize;
 
 SECTIONS
 {
+    /* Read the beginning of the used flash ROM into a linker label. Alignment is a
+       combination of MPU (16 Byte) and I-cache (32 Byte). */
+    .dummyROMStart : ALIGN(32) { ld_romStart = ABSOLUTE(.); } >memFlash
+
     /* The boot sector contains a few memory words specifying the core to be started and its
        reset vectors. */
     .bafData :
     {
-        ld_romStart = ABSOLUTE(.);
         KEEP(*(.bafData))
 
     } > memBoot

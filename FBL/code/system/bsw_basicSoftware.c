@@ -48,6 +48,7 @@
 #include "ccp_taskCcp.h"
 #include "cdr_canDriverAPI.h"
 #include "dma_dmaDriver.h"
+#include "fbh_findBootHeader.h"
 #include "gsl_systemLoad.h"
 #include "lbd_ledAndButtonDriver.h"
 #include "rom_flashRomDriver.h"
@@ -55,6 +56,7 @@
 #include "sio_serialIO.h"
 #include "siu_siuPortDriver.h"
 #include "stm_systemTimer.h"
+#include "swr_softwareReset.h"
 #include "tds_taskDigSignature.h"
 #include "typ_types.h"
 #include "xbs_crossbarSwitch.h"
@@ -321,23 +323,53 @@ bsw_osCbOnCANRxCanN(CAN_3)
  * register values from exit of the reset procedure.\n
  *   Note, all application arguments are delivered as raw numbers, not as text or char*.
  */
-uint32_t bsw_bootFlag = 999
-       , MC_RGM_DES = 0x999
-       , MC_RGM_FES = 0x999;
 int /* _Noreturn */ main(int noArgs ATTRIB_DBG_ONLY, const uint32_t argAry[3])
 {
     assert(noArgs == 3);
-    bsw_bootFlag = argAry[0];
-    MC_RGM_DES = argAry[1];
-    MC_RGM_FES = argAry[2];
-//    #warning Preliminary test code. Jumps into app at 0x00800010 without validation of boot sector
-//    if(fblFlag == 0xDeafBee)
-//    {
-//        /* The deaf bee indicates that we should immediately branch into a flashed
-//           application. Because we haven't initialized the hardware yet, this can be done
-//           without conflict by jumping directly to the starting address. */     
-//        ((void (*)(void))0x00800010ul)();
-//    }
+    const uint32_t bsw_bootFlag = argAry[0]
+                 , MC_RGM_DES = argAry[1]
+                 , MC_RGM_FES = argAry[2];
+    
+    /* Branching in the application:
+       1. It can be done only here, before we initialize more hardware. Several HW devices
+          can't easily re-configured or the application is not aware of the device, but
+          suffers from its behavior configured in the FBL. Known critical devices are the
+          MPU and CAN.
+       2. It must not be done unconditionally. We want, e.g., let the FBL operate a short
+          while to see, if the reset has been triggered to start a flash process. In which
+          case some CCP client should soon try to connect. We need to start the normal FBL
+          operation and wait at least a short while for CCP.
+       3. We start the application immediately, if this is demanded by boot flag. Use-case:
+          A reset without boot flag, e.g, power-on reset, needs to consider 2. and starts
+          the FBL. If the FBL doesn't get a soon CCP connect request then it must trigger a
+          SW reset (because of 1.) with flag "start app immediately".
+       4. The application can have triggered a SW reset explicitly to get into the flash
+          mode, e.g., as result of some XCP commanding. In this case, the FBL should start
+          up and remain active, even if there is no soon CCP connect request.
+       5. Getting the boot flag across the reset can fail. In this case, we must avoid an
+          infinite loop: No Flag at startup. FBL starts up for shortly snooping for CCP.
+          FBl doesn't see CCP and sets flag to start app immediately. FBL triggers reset.
+          After reset, flag is not received - and everything is repeated. We can inspect
+          MC_RGM_DES and MC_RGM_FES to find the indication for a possibly lost boot flag
+          and start the application immediately in this case.
+       6. Probably lost flag: Any DES bit is set, which is not POR, i.e., we had a
+          destructive reset that is not a power-on reset. Or FES indicates a SW-reset but
+          we didn't get a known flag.
+       7. The likelihood of accidentally getting a flag, which had not been sent by FBL or
+          app before the reset, is considered negligible.
+       8. An application needs to be loaded in the flash ROM. */
+    const uint32_t appAddr = fbh_findApplication();
+    const bool isAppLoaded = appAddr != 0
+             , startFbl = bsw_bootFlag == SWR_BOOT_FLAG_START_FBL 
+             , startApp = bsw_bootFlag == SWR_BOOT_FLAG_START_APP
+             , gotFlag = startFbl || startApp
+             , lostFlag = (MC_RGM_DES & ~MC_RGM_DES_F_POR_MASK) != 0u
+                          ||  (MC_RGM_FES & MC_RGM_FES_F_SOFT_FUNC_MASK) != 0u && !gotFlag
+             , startAppImmediately = isAppLoaded && (startApp || lostFlag)
+             , runFblUnlimited = startFbl || !isAppLoaded;
+    if(startAppImmediately)
+        ((void (*)(void))appAddr)();
+
     /* Complete the core HW initialization - as far as not yet done by the assembly startup
        code. */
 

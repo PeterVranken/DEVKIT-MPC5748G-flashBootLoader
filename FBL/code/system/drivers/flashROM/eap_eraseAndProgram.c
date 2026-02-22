@@ -104,7 +104,7 @@ typedef struct
 static const flashBlockDesc_t RODATA(flashBlockDescAry)[] =
 {
 #if defined(MCU_MPC5748G)
-    {.addrFrom = 0x00FC0000u, .addrTo = 0x00FC8000u, .idxPartition = 0u, .idxLockReg = 0u, .bitMaskLockReg = 0x00040000u,},  /* 32KB Code Flash block */
+//    {.addrFrom = 0x00FC0000u, .addrTo = 0x00FC8000u, .idxPartition = 0u, .idxLockReg = 0u, .bitMaskLockReg = 0x00040000u,},  /* 32KB Code Flash block */
     {.addrFrom = 0x00FC8000u, .addrTo = 0x00FD0000u, .idxPartition = 0u, .idxLockReg = 0u, .bitMaskLockReg = 0x00080000u,},  /* 32KB Code Flash block */
     {.addrFrom = 0x00FD0000u, .addrTo = 0x00FD8000u, .idxPartition = 1u, .idxLockReg = 0u, .bitMaskLockReg = 0x00100000u,},  /* 32KB Code Flash block */
     {.addrFrom = 0x00FD8000u, .addrTo = 0x00FE0000u, .idxPartition = 1u, .idxLockReg = 0u, .bitMaskLockReg = 0x00200000u,},  /* 32KB Code Flash block */

@@ -69,7 +69,7 @@
 #include "hwc_hardwareConfiguration.h"
 #include "rtos.config.h"
 #include "rtos_ivorHandler.h"
-
+#include "swr_softwareReset.h"
 
 /*
  * Defines
@@ -143,7 +143,7 @@ sup_main_Z2:
 
 /**
  * The boot sector contents are defined here. The binary build-up of the sector (and where
- * in memory it can be placed) is described in RM, section 57, p. 2837.\n
+ * in memory it can be placed) is described in RM, section 57, pp.2839ff.\n
  *   Note: It's untransparent why we need to configure here in the boot sector, which CPUs
  * to start and from where, while the secondary cores Z4B and Z2 are explicitly started by
  * code executed by the main core Z4A. The start code executed by Z4A explicitly sets the
@@ -240,8 +240,8 @@ sup_startUp:
     e_lis       r3, ld_memRamStart@h
     e_or2i      r3, ld_memRamStart@l    /* r3 points to first RAM word. We expect the magic. */
     se_lwz      r5, 0(r3)           /* r5 = *ld_memRamStart, holds first RAM word. */
-    e_lis       r4, 0xDEADBEEF@h
-    e_or2i      r4, 0xDEADBEEF@l    /* r4 holds the expected magic. */
+    e_lis       r4, SWR_MAGIC_IS_BOOT_FLAG_VALID@h
+    e_or2i      r4, SWR_MAGIC_IS_BOOT_FLAG_VALID@l    /* r4 holds the expected magic. */
     se_cmpl     r5, r4              /* r5 == r4? */
     se_li       r29, 2              /* 1st Argument of main if bad magic. */
     se_bne      su_checkMcAfterReadRAM  /* RAM doesn't contain the magic. */

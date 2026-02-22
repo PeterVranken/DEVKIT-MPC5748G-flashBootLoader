@@ -1338,15 +1338,22 @@ static void reSubmitCroCmd(void)
  */
 static void onClockTick(void)
 {
-// TODO Preliminary interafce to trigger a reset
+// TODO Preliminary interface to trigger a reset
     if(apt_restartApp != 0u)
     {
         /* The function doesn't reset immediately; it has a count-down so that we can still
            give some feedback and be able to properly close the CCP session. */
-// TODO The countdown and feeback better belongs here.
-        swr_osSoftwareReset();
+        static uint16_t tiTillReset_ = 1000u;
+        if(tiTillReset_ == 1000u)
+            iprintf("Restarting by SW reset in 1s\r\n");
+
+        /* Give console output the time to show this message. */
+        if(tiTillReset_ == 0u)
+            swr_osSoftwareReset(SWR_BOOT_FLAG_START_FBL);
+        else
+            -- tiTillReset_;
     }
-    
+
     if(_ccpFsm.tiWaitInMs > 0u)
         -- _ccpFsm.tiWaitInMs;
 
@@ -1367,7 +1374,7 @@ static void onClockTick(void)
     case ccp_stateFsm_authenticationBusy:
         /* The valdation of the digital signation received as key for authentication is
            ongoing in a low priority background task. */
-        {        
+        {
             const enum tds_taskState_t stAuth = tds_getStateOfVerificationTask();
             if(checkTimeout(stAuth != tds_ts_busy) != to_busy)
             {
@@ -1387,7 +1394,7 @@ static void onClockTick(void)
                                ? ccpCmdRespCode_noError
                                : ccpCmdRespCode_paramOutOfRange
                               );
-            }                
+            }
         }
         break;
 
