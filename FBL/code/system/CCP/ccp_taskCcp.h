@@ -47,6 +47,10 @@
 /** Boolean: Is the CAN ID of the CCP DTO message a 29 Bit extended ID? */
 #define CCP_IS_EXT_CAN_ID_CCP_DTO_MSG   false
  
+/** The 16 Bit station address of the ECU. This value is addressed to in the CCP CONNECT
+    command. */
+#define CCP_STATION_ADDR                0x1234u
+
 
 /** The CCP task uses countable events as trigger. All events, which can trigger the task
     share the 32 bits of the task parameter. We define masks for the different events. Here
@@ -96,7 +100,7 @@
  */
 
 /** Initialize the module. */
-bool ccp_osInitCcpTask(void);
+bool ccp_osInitCcpTask(uint8_t tiTillResetToAppInMs);
 
 /** The OS task, which is activated either on reception of a CCP CAN message. */
 void ccp_taskOsRxCcp(uint32_t taskParam);

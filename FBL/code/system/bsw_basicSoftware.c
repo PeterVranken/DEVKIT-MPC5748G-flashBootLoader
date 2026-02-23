@@ -316,11 +316,20 @@ bsw_osCbOnCANRxCanN(CAN_3)
  * Number of arguments in \a argAry. Is actually always equal to three.
  *   @param argAry
  * For the FBL, the startup code has been modified such that main receives the boot flag as
- * first argument in \a argAry, followed by the values of registers MC_RGM_DES and MC_RGM_FES,  * in this order.\n
- *   On entry, the device registers MC_RGM_DES and MC_RGM_FES have already been cleared, so
- * that they are prepared to take the information of the next reset. (HW will only change
- * bits from 0 to 1 but never update an already set bit.) Therefore, it is useful get the
- * register values from exit of the reset procedure.\n
+ * first argument in \a argAry, followed by the values of registers MC_RGM_DES and
+ * MC_RGM_FES, in this order.\n
+ *   The boot flag normally has the value, which is provided by the application, when
+ * requesting a SW reset. In situations, where this is not possible or if delivering the
+ * flag failed, the value is replaced by the following special values:\n
+ *   0: The reset was a power-on or other destructive reset. See register MC_RGM_DES for
+ * details.\n
+ *   1: The RAM could not be read due to a (maskable) machine check exception. (It is
+ * unclear if this can ever happen.)\n
+ *   2: RAM contents had been damaged, flag was not read.\n
+ *   On entry into main, the device registers MC_RGM_DES and MC_RGM_FES have already been
+ * cleared, so that they are prepared to take the information of the next reset. (HW will
+ * only change bits from 0 to 1 but never update an already set bit.) Therefore, it is
+ * useful to get the register values from exit of the reset procedure.\n
  *   Note, all application arguments are delivered as raw numbers, not as text or char*.
  */
 int /* _Noreturn */ main(int noArgs ATTRIB_DBG_ONLY, const uint32_t argAry[3])
@@ -449,7 +458,7 @@ int /* _Noreturn */ main(int noArgs ATTRIB_DBG_ONLY, const uint32_t argAry[3])
 
     /* Initialize the CCP protocol implementation. This step depends on the CAN driver CDR
         and must come after cdr_osInitCanDriver(). */
-    if(!ccp_osInitCcpTask())
+    if(!ccp_osInitCcpTask(runFblUnlimited? 0u: BSW_TI_WAIT_FOR_CCP_CONNECT_OUT_OF_RESET_IN_MS))
     {
         initOk = false;
         assert(false);
@@ -639,6 +648,13 @@ int /* _Noreturn */ main(int noArgs ATTRIB_DBG_ONLY, const uint32_t argAry[3])
 
     /* The code down here becomes the idle task of the RTOS. We enter an infinite loop,
        where some background code can be placed. */
+    if(!isAppLoaded)
+        iprintf("No valid application found in flash ROM.\r\n");
+
+    iprintf( "main: Got boot flag 0x%08lX, DES: 0x%08lX, FES: 0x%08lX\r\n"
+           , bsw_bootFlag
+           , MC_RGM_DES, MC_RGM_FES
+           );
     while(true)
     {
         /* Regularly re-calculate the current stack reserve, i.e., the number of not yet
@@ -653,11 +669,6 @@ int /* _Noreturn */ main(int noArgs ATTRIB_DBG_ONLY, const uint32_t argAry[3])
            of the rest of the code in the idle loop. */
         bsw_cpuLoad = gsl_osGetSystemLoad();
 
-    /* Argument of main in case of POR: 0 */
-    /* Argument main in case of error reading RAM: 1 */
-    /* Argument of main if bad magic: 2 */
-    /* Argument of SW reset recognized: 0xDEAFBEE (can be any value set by applciation) */
-    iprintf("main: Got boot flag 0x%08lX, DES: 0x%08lX, FES: 0x%08lX\r\n", bsw_bootFlag, MC_RGM_DES, MC_RGM_FES);
     } /* End of infinite idle loop of RTOS. */
 
     /* We never get here. Just to avoid a compiler warning. */

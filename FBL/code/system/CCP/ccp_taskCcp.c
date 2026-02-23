@@ -81,10 +81,6 @@
  * Defines
  */
 
-/** The 16 Bit station address of the ECU. This value is addressed to in the CCP CONNECT
-    command. */
-#define CCP_STATION_ADDR        0x1234u
-
 /** Development support: Set verbosity. If not zero then more or less information is
     written to the console. Needs to be zero for productive use. */
 #define VERBOSE     1
@@ -157,7 +153,8 @@ enum diagServiceNum_t
 {
     diagSN_uploadSeed = 0x00u,
     diagSN_uploadVersionFbl = 0x01u,
-    diagSN_resetEcu = 0x02u,
+    diagSN_resetEcuToFbl = 0x02u,
+    diagSN_resetEcuToApp = 0x08u, /**< Code chosen compatible with NXP's RAppId tool. */
 };
 
 /** The action service numbers in use. */
@@ -254,11 +251,24 @@ static struct ccpFsm_t
 /** The authentication state. */
 static enum
 {
-    stKey_noAuthenticationYet,
-    stKey_authenticationFailed,
-    stKey_authentified,
+    stKey_noAuthenticationYet,  /**< Authentication not tried in current session. */
+    stKey_authenticationFailed, /**< Authenitcation has failed and must not be repeated. */
+    stKey_authentified,         /**< All CCP commands are permitted in this session. */
 
 } _stateAuthentication SECTION(.data.OS._stateAuthentication) = stKey_noAuthenticationYet;
+
+/** The time-to-reset counter states. */
+static enum
+{
+    stReset_unlimitedOperation, /**< No reset is scheduled at all, FBL runs forever. */    
+    stReset_launchFbl,  /**< Reset is scheduled and will (re-)launch the FBL after reset. */
+    stReset_launchApp,  /**< Reset is scheduled and will launch the flashed application. */
+    
+} _stateScheduledReset SECTION(.sdata.OS._stateScheduledReset) = stReset_unlimitedOperation;
+
+/** The counter till reset. Unit is Milliseconds. Reset happens at counter value 0 and if
+    _stateScheduledReset is not \a stReset_unlimitedOperation. */
+static uint8_t _tiTillResetInMs = 0;
 
 /*
  * Function implementation
@@ -390,11 +400,18 @@ static inline bool isServiceResponseAddress(bool isUpload, uint32_t address, uin
  *   @return
  * The function returns \a true on success. If \a false is returned then CCP won't be
  * operational and the application should better not start up.
+ *   @param[in] tiTillResetToAppInMs
+ * The typical operation of the FBL is running only for a short while, to snoop for
+ * potential CCP CONNECT requests from a CCP client but to start the flashed application if
+ * there's no such request. This is the time in Milliseconds to wait for a connect
+ * request. Range is 1..255ms.\n
+ *   If there is no application in flash ROM then this time can be set to 0. A value of
+ * zero means the FBL will operated unlimited, no reset will be triggered.
  *   @remark
  * This function depends on the CAN driver CDR, which needs to be initialized before
  * calling this function.
  */
-bool ccp_osInitCcpTask(void)
+bool ccp_osInitCcpTask(uint8_t tiTillResetToAppInMs)
 {
     bool success = true;
 
@@ -429,6 +446,19 @@ bool ccp_osInitCcpTask(void)
       )
     {
         success = false;
+    }
+
+    /* Program the reset counter for launching a flashed application if there is no CCP
+       CONNECT request. */
+    if(tiTillResetToAppInMs > 0u)
+    {
+        _stateScheduledReset = stReset_launchApp;
+        _tiTillResetInMs = tiTillResetToAppInMs;
+    }
+    else
+    {
+        _stateScheduledReset = stReset_unlimitedOperation;
+        _tiTillResetInMs = 0u;
     }
 
     return success;
@@ -1133,13 +1163,38 @@ static void onDiagService(void)
         noResponseBytes = sizeof(tds_authenticationData.seed)
                           + sizeof(tds_authenticationData.addrOfKey);
     }
-    else if(serviceNo == diagSN_uploadVersionFbl
+    else if(serviceNo == diagSN_uploadVersionFbl 
             &&  _stateAuthentication == stKey_authentified
            )
     {
         /* The MTA is set to where the response has to be uploaded from. */
         _ccpFsm.mta0 = (uint32_t)&bsw_version[0];
         noResponseBytes = bsw_sizeOfVersion;
+    }
+    else if((serviceNo == diagSN_resetEcuToFbl  ||  serviceNo == diagSN_resetEcuToApp)
+            &&  _stateAuthentication == stKey_authentified
+           )
+    {
+        /* The MTA is invalidated as the service has not response. */
+        _ccpFsm.mta0 = 0u;
+        noResponseBytes = 0u;
+        
+        #if VERBOSE >= 1
+        iprintf( "ECU is soon reset by DIAG_SERVICE. %s will be launched after reset.\r\n"
+               , serviceNo == diagSN_resetEcuToFbl? "FBL": "Flashed application"
+               );
+        #endif
+        
+        /* Signal the reset and configure a short delay. Switching after flashing to the
+           flashed application is in no way time critical, so a delay doesn't harm but
+           allows the CCP client to still disconnect. */
+        _stateScheduledReset = serviceNo == diagSN_resetEcuToApp
+                               ? stReset_launchApp
+                               : stReset_launchFbl;
+        
+        /* Provide the time to send the DTO, to allow clean DISCONNECT and to transmit the
+           console feedback to a potentially connected terminal. */
+        _tiTillResetInMs = 200u;
     }
     else
     {
@@ -1148,6 +1203,10 @@ static void onDiagService(void)
     }
 
     _ccpFsm.dtoMsg.payload[3] = noResponseBytes;
+    
+    /* We don't need or support the data type information. */
+    _ccpFsm.dtoMsg.payload[4] = 0; 
+
     finalizeDtoMsg(reponseCode);
 
 } /* onDiagService */
@@ -1177,6 +1236,10 @@ static void onRxCroMsg(void)
                                                    + _ccpFsm.croMsg.payload[2];
             if(wantedStationAddr == CCP_STATION_ADDR)
             {
+                /* Stop timeout till reset, if any. */
+                _stateScheduledReset = stReset_unlimitedOperation;
+                _tiTillResetInMs = 0u;
+                
                 #if VERBOSE >= 1
                 iprintf("Connected with CCP client.\r\n");
                 #endif
@@ -1338,24 +1401,29 @@ static void reSubmitCroCmd(void)
  */
 static void onClockTick(void)
 {
-// TODO Preliminary interface to trigger a reset
-    if(apt_restartApp != 0u)
-    {
-        /* The function doesn't reset immediately; it has a count-down so that we can still
-           give some feedback and be able to properly close the CCP session. */
-        static uint16_t tiTillReset_ = 1000u;
-        if(tiTillReset_ == 1000u)
-            iprintf("Restarting by SW reset in 1s\r\n");
-
-        /* Give console output the time to show this message. */
-        if(tiTillReset_ == 0u)
-            swr_osSoftwareReset(SWR_BOOT_FLAG_START_FBL);
-        else
-            -- tiTillReset_;
-    }
-
     if(_ccpFsm.tiWaitInMs > 0u)
         -- _ccpFsm.tiWaitInMs;
+
+    #warning Preliminary interface with CLI to reset
+    if(apt_restartApp != 0u  &&  _stateScheduledReset == stReset_unlimitedOperation)
+    {
+        iprintf("Restarting FBL by console command.\r\n");
+        _stateScheduledReset = stReset_launchFbl;
+        _tiTillResetInMs = 255u;
+    }
+    
+    /* Reset state machine: Trigger a reset if commanded and delay time is elapsed. */
+    if(_stateScheduledReset != stReset_unlimitedOperation)
+    {
+        /* The function doesn't reset immediately; it has a count-down so that we
+           give some feedback and be able to properly close the CCP session. */
+        if(_tiTillResetInMs > 0u)
+            -- _tiTillResetInMs;
+        else if(_stateScheduledReset == stReset_launchApp)
+            swr_osSoftwareReset(SWR_BOOT_FLAG_START_APP);
+        else
+            swr_osSoftwareReset(SWR_BOOT_FLAG_START_FBL);
+    }
 
     switch(_ccpFsm.state)
     {

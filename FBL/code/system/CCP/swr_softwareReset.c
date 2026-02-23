@@ -73,6 +73,9 @@
  */
 void swr_osSoftwareReset(uint32_t bootFlag)
 {
+    /* Only allowing the two flags is a restriction of the FBL itself. The reset and
+       startup code allows any value >= 0x10. (The lower numbers are reserved for error
+       codes.) */
     assert(bootFlag == SWR_BOOT_FLAG_START_FBL  ||  bootFlag == SWR_BOOT_FLAG_START_APP);
 
     /* Restart the application by reset. The information, whether and what to start

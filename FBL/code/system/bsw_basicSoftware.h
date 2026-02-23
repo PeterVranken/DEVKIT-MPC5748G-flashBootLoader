@@ -31,16 +31,20 @@
  * Defines
  */
 
-/** Software version */
-#define BSW_VERSION "0.6.0"
+/** Software version FBL. */
+#define BSW_VERSION "0.7.0"
+
+/** The time delay between startup of FBL and branching into the flashed application. The
+    FBL will take this (short) time to snoop for potential connect requests by a CCP
+    client, to give it a chance to flash a new application. Unit is Milliseconds. */
+#define BSW_TI_WAIT_FOR_CCP_CONNECT_OUT_OF_RESET_IN_MS  50u
 
 /** The MCU core, which most of the BSW is executed on. The I/O drivers are executed on
     this core and many of the APIs, which they offer, are only available to code running on
-    this core. In the API documentation, this core is often referred toas the "main core".
+    this core. In the API documentation, this core is often referred to as the "main core".
     Note, this is a reporting macro, not a configuration item. It is not possible to choose
     the core just by changing the macro. */
 #define BSW_MAIN_CORE   0u  /* Z7_0 or Z7A */
-
 
 /** The process initialization tasks, which are provided by the application code, must not
     execute longer than this time budget. Otherwise the system won't start up. */
