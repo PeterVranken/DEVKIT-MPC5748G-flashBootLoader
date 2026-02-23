@@ -229,7 +229,7 @@ sup_startUp:
     se_bne      su_zeroizeSRAM      /* Jump on any bit in DES set */
     e_lis       r3, MC_RGM_FES@ha   /* Functional Event Status Register, RM 55.3.3, pp.2794ff*/
     e_lwz       r3, MC_RGM_FES@l(r3)/* r3 = MC_RGM_FES */
-    se_li       r29, 0              /* Argument of main in case of non-sw reset */
+    se_li       r29, 0              /* Argument of main in case of non-SW reset */
     se_li       r4, 8               /* Mask for bit 31, F_POR */
     se_and.     r3, r4              /* r3 holds MC_RGM_DES masked for F_POR; cc reg CR0 set */
     se_beq      su_zeroizeSRAM      /* Jump on not F_SOFT_FUNC, i.e., if Bit 28 is cleared. */

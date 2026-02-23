@@ -303,7 +303,7 @@ $(targetDir)$(target).elf: $(if $(patchWindowsBug),$(targetDir)obj/listOfObjFile
 # Create hex file from linker output.
 $(targetDir)$(target).s19: $(targetDir)$(target).elf
 	$(objcopy) -O ihex $< $(patsubst %.elf,%.hex,$<)
-	$(objcopy) -O symbolsrec $< $(patsubst %.elf,%.s19,$<)
+	$(objcopy) -O srec $< $(patsubst %.elf,%.s19,$<)
 
 # Delete all dependency files ignoring (-) the return code from Windows because of non
 # existing files.

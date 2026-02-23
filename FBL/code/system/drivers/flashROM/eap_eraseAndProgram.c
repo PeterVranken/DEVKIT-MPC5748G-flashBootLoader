@@ -260,7 +260,7 @@ static void enableFlashBlocks(uint32_t addressFrom, uint32_t noBytes, bool isEra
             {
                 /* We always program single quad-pages, so there can't be more than one
                    touched flash block. */
-                #if 1
+                #if 0
                 iprintf( "Unlock flash block %06lX..%06lX for programming.\r\n"
                        , pBlkDesc->addrFrom
                        , pBlkDesc->addrTo
