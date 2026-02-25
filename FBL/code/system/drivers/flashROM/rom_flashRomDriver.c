@@ -444,7 +444,7 @@ void rom_osFlashRomDriverMain(void)
         latchLastError(errCode);
         _isBusyErasing = errCode == rom_err_processPending;
     }
-    else
+    if(!_isBusyErasing)
     {
         /* If we have a quad-page in programming mode, then check the driver status if
            programming of the quad-page has completed. */

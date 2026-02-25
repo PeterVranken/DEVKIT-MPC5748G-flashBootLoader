@@ -609,7 +609,7 @@ rom_errorCode_t eap_osGetStatusEraseFlashBlocks(void)
 
         /* Regardless whether erasure succeeded or failed, flash ROM array contents may
            have altered and we have the (very high) risk of a D-cache inconsistency. We
-           invalidate the entire cache. Note, the I-cache is no affected as we don't read
+           invalidate the entire cache. Note, the I-cache is not affected as we don't read
            any instruction from the erased flash blocks, whereas we will read the data for
            a blank check. */
         rtos_osInitializeDCache();
@@ -763,8 +763,8 @@ rom_errorCode_t eap_osGetStatusProgramQuadPage(void)
         abortEraseAndProgram();
 
         /* Before we continue with the verify, we invalidate all quad-page addresses in the
-           D-cache - without we would likely not read the bytes physcally programmed in the
-           flash array but the still cached data from the interlock writes, and verify
+           D-cache - without we would likely not read the bytes physically programmed in
+           the flash array but the still cached data from the interlock writes, and verify
            would then always succeed. */
         invalidateDCache(_pPrgDataBuf->address);
 

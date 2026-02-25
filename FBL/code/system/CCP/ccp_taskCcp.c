@@ -827,6 +827,11 @@ static void onUpload(void)
                                                              );
     if(_ccpFsm.noBytesToProcess <= 5u && isValidAddrRange)
     {
+        /* Potentially, we switch from programming to uploading. This requires flushing a possibly pending
+           input buffer. The operation is very cheap. It doesn't matter doing it before every upload command. 
+           Maintaining and checking a status variable would likely cost more. */
+        rom_osFlushProgramDataBuffer();
+
         if(isFlashDriverReady())
             finishUpload();
         else
