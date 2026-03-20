@@ -60,7 +60,7 @@ else
 
 # Create a convenience shortcut to the right instance of the make processor.
 set-alias -Name "make" `
-          -Value ("$PSScriptRoot\bin\mingw32-make.exe") `
+          -Value ("$PSScriptRoot\tools\make\make.exe") `
           -Description ('Run the GNU make processor, which is appropriate to build the' `
                         + ' software for the DEVKIT-MPC5748G board')
 
