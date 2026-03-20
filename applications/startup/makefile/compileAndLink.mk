@@ -80,7 +80,7 @@ target := $(project)
 
 # The name of the executable file. This is the final build product. It is requested from
 # outside this makefile fragment through this name.
-projectExe := $(target).s19
+projectExe := $(target).s28
 
 # Access help as default target or by several names. This target needs to be the first one
 # in this file.
@@ -416,9 +416,9 @@ $(targetDir)$(target).elf: $(targetDir)obj/listOfObjFiles.txt makefile/linkerCon
 	$(gcc) $(lFlags) -o $@ @$< -lm
 
 # Create hex file from linker output.
-$(targetDir)$(target).s19: $(targetDir)$(target).elf
+$(targetDir)$(target).s28: $(targetDir)$(target).elf
 	$(objcopy) -O ihex $< $(patsubst %.elf,%.hex,$<)
-	$(objcopy) -O srec $< $(patsubst %.elf,%.s19,$<)
+	$(objcopy) -O srec $< $(patsubst %.elf,%.s28,$<)
 
 # Delete all dependency files ignoring (-) the return code from Windows because of non
 # existing files.
