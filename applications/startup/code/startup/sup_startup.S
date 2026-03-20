@@ -138,7 +138,7 @@ sup_main_Z2:
 
 /**
  * The boot sector contents are defined here. The binary build-up of the sector (and where
- * in memory it can be placed) is described in RM, section 57, p. 2837.\n
+ * in memory it can be placed) is described in RM, section 57, pp.2839ff.\n
  *   Note: It's untransparent why we need to configure here in the boot sector, which CPUs
  * to start and from where, while the secondary cores Z4B and Z2 are explicitly started by
  * code executed by the main core Z4A. The start code executed by Z4A explicitly sets the
@@ -157,6 +157,14 @@ sup_bafData:
     .org        sup_bafData + 0x04, 0xff
     .dc.l       sup_startUp
 
+    /* FBL configuration: Time to wait for CCP connect attempt after reset, unit ms. */
+    .org        sup_bafData + 0x08, 0xff
+    .dc.l       500
+
+    /* FBL configuration: Pointer to magic at application end. */
+    .org        sup_bafData + 0x0C, 0xff
+    .dc.l       sup_bafMagicApplicationPresent
+
     /* Reset vector for core 0. */
     .org        sup_bafData + 0x10, 0xff
     .dc.l       sup_startUp
@@ -165,9 +173,6 @@ sup_bafData:
     .org        sup_bafData + 0x14, 0xff
     .dc.l       sup_startUp
     
-    /* Pointer to magic at appication end. */
-    .dc.l       sup_bafMagicApplicationPresent
-
 /** 
  * This magic value is placed at the end of the application code. Checking for this flag is
  * the most simple validation of a propely flashed application, the FBL performs. (Should

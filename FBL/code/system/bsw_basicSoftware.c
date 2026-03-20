@@ -131,6 +131,7 @@ enum
     /** The number of event processors to register. */
     noRegisteredEvProcs
 };
+#warning CCP_ID_EV_PROC_DIG_SIGNATURE should be TDS_ID_EV_PROC_DIG_SIGNATURE?
 _Static_assert( CCP_ID_EV_PROC_RX_CRO == idEvProcRxCcp
                 &&  CCP_ID_EV_PROC_DIG_SIGNATURE == idEvProcDigitalSignature
               , "Inconsistency in public interface"
@@ -181,7 +182,7 @@ const char RODATA(bsw_version)[] =
 
 /** The number of bytes/characters of the version string \a bsw_version. Note, for easy
     printing, the version designation ends with an end of line character sequence. This
-    sequence i snot counted in \a bsw_sizeOfVersion. */
+    sequence is not counted in \a bsw_sizeOfVersion. */
 uint8_t DATA_OS(bsw_sizeOfVersion) = 0u;
 
 /** The average CPU load produced by all tasks and interrupts in tens of percent. Can be
@@ -335,13 +336,13 @@ bsw_osCbOnCANRxCanN(CAN_3)
 int /* _Noreturn */ main(int noArgs ATTRIB_DBG_ONLY, const uint32_t argAry[3])
 {
     assert(noArgs == 3);
-    const uint32_t bsw_bootFlag = argAry[0]
+    const uint32_t bootFlag = argAry[0]
                  , MC_RGM_DES = argAry[1]
                  , MC_RGM_FES = argAry[2];
     
     /* Branching in the application:
        1. It can be done only here, before we initialize more hardware. Several HW devices
-          can't easily re-configured or the application is not aware of the device, but
+          can't easily be re-configured or the application is not aware of the device, but
           suffers from its behavior configured in the FBL. Known critical devices are the
           MPU and CAN.
        2. It must not be done unconditionally. We want, e.g., let the FBL operate a short
@@ -367,15 +368,19 @@ int /* _Noreturn */ main(int noArgs ATTRIB_DBG_ONLY, const uint32_t argAry[3])
        7. The likelihood of accidentally getting a flag, which had not been sent by FBL or
           app before the reset, is considered negligible.
        8. An application needs to be loaded in the flash ROM. */
-    const uint32_t appAddr = fbh_findApplication();
+    uint32_t tiWaitForCcpInMs;
+    const uint32_t appAddr = fbh_findApplication(&tiWaitForCcpInMs);
     const bool isAppLoaded = appAddr != 0
-             , startFbl = bsw_bootFlag == SWR_BOOT_FLAG_START_FBL 
-             , startApp = bsw_bootFlag == SWR_BOOT_FLAG_START_APP
+             , startFbl = bootFlag == SWR_BOOT_FLAG_START_FBL 
+             , startApp = bootFlag == SWR_BOOT_FLAG_START_APP
              , gotFlag = startFbl || startApp
              , lostFlag = (MC_RGM_DES & ~MC_RGM_DES_F_POR_MASK) != 0u
                           ||  (MC_RGM_FES & MC_RGM_FES_F_SOFT_FUNC_MASK) != 0u && !gotFlag
-             , startAppImmediately = isAppLoaded && (startApp || lostFlag)
-             , runFblUnlimited = startFbl || !isAppLoaded;
+             , runFblUnlimited = startFbl || !isAppLoaded
+             , startAppImmediately = isAppLoaded 
+                                     && (startApp || lostFlag
+                                         ||  !startFbl &&  tiWaitForCcpInMs == 0u
+                                        );
     if(startAppImmediately)
         ((void (*)(void))appAddr)();
 
@@ -397,7 +402,7 @@ int /* _Noreturn */ main(int noArgs ATTRIB_DBG_ONLY, const uint32_t argAry[3])
     xbs_configCrossbarSwitch(/* isZ2IOCore */ true);
 
     /* The core is now running in the desired state. I/O driver initialization follows to
-       the extend required by this simple sample. */
+       the extend required by the FBL. */
 
     /* The interrupt controller is configured. This is the first driver initialization
        call: Many of the others will register their individual ISRs and this must not be
@@ -417,8 +422,10 @@ int /* _Noreturn */ main(int noArgs ATTRIB_DBG_ONLY, const uint32_t argAry[3])
        driver. */
     siu_osInitPortDriver();
 
-    /* Initialize the DMA driver. This driver needs to be initialized prior to any other
-       I/O driver, which makes use of a DMA channel. */
+    /* Start the DMA driver, which coordinates the use of the various DMA channels by other
+       drivers. Therefore, this driver needs to be initialized prior to any other driver,
+       which makes use of DMA. Among more, these are: serial communication interface (sio)
+       and serial peripheral interface (spi). */
     dma_osInitDMADriver();
 
     /* Initialize the button and LED driver for the eval board. Shape access to the eight
@@ -432,10 +439,10 @@ int /* _Noreturn */ main(int noArgs ATTRIB_DBG_ONLY, const uint32_t argAry[3])
                                 , /* tiMaxTimeInUs */                1000
                                 );
     
-    /* CCP requires that the version length fits into a single byte. -2: The trailing
-       \r\n doesn't count. */
-    assert(strlen(bsw_version) <= 255u);
-    bsw_sizeOfVersion = (uint8_t)strlen(bsw_version) - 2u;
+    /* CCP requires that the length of the version string fits into a single byte. 257, -2:
+       The trailing \r\n doesn't count. */
+    assert(strlen(bsw_version) <= 257u);
+    bsw_sizeOfVersion = (uint8_t)(strlen(bsw_version) - 2u);
 
     /* Initialize the serial output channel as prerequisite of using printf. */
     sio_osInitSerialInterface(/* baudRate */ 115200);
@@ -457,8 +464,8 @@ int /* _Noreturn */ main(int noArgs ATTRIB_DBG_ONLY, const uint32_t argAry[3])
     }
 
     /* Initialize the CCP protocol implementation. This step depends on the CAN driver CDR
-        and must come after cdr_osInitCanDriver(). */
-    if(!ccp_osInitCcpTask(runFblUnlimited? 0u: BSW_TI_WAIT_FOR_CCP_CONNECT_OUT_OF_RESET_IN_MS))
+       and must come after cdr_osInitCanDriver(). */
+    if(!ccp_osInitCcpTask(runFblUnlimited? 0u: tiWaitForCcpInMs))
     {
         initOk = false;
         assert(false);
@@ -652,7 +659,7 @@ int /* _Noreturn */ main(int noArgs ATTRIB_DBG_ONLY, const uint32_t argAry[3])
         iprintf("No valid application found in flash ROM.\r\n");
 
     iprintf( "main: Got boot flag 0x%08lX, DES: 0x%08lX, FES: 0x%08lX\r\n"
-           , bsw_bootFlag
+           , bootFlag
            , MC_RGM_DES, MC_RGM_FES
            );
     while(true)

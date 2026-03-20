@@ -50,7 +50,7 @@
  */
 
 /* Search the flash ROM for a loaded, usable application. */
-uint32_t fbh_findApplication(void);
+uint32_t fbh_findApplication(uint32_t * const pTiWaitForCcpInMs);
 
 /*
  * Global inline functions

@@ -32,12 +32,7 @@
  */
 
 /** Software version FBL. */
-#define BSW_VERSION "0.7.0"
-
-/** The time delay between startup of FBL and branching into the flashed application. The
-    FBL will take this (short) time to snoop for potential connect requests by a CCP
-    client, to give it a chance to flash a new application. Unit is Milliseconds. */
-#define BSW_TI_WAIT_FOR_CCP_CONNECT_OUT_OF_RESET_IN_MS  50u
+#define BSW_VERSION "0.9.0"
 
 /** The MCU core, which most of the BSW is executed on. The I/O drivers are executed on
     this core and many of the APIs, which they offer, are only available to code running on
