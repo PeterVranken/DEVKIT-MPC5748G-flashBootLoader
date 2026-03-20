@@ -31,7 +31,7 @@
  *   - Peripheral bridges\n
  *   - Interrupt controller for External Interrupts\n
  *
- * Copyright (C) 2017-2024 Peter Vranken (mailto:Peter_Vranken@Yahoo.de)
+ * Copyright (C) 2017-2026 Peter Vranken (mailto:Peter_Vranken@Yahoo.de)
  *
  * This program is free software: you can redistribute it and/or modify it
  * under the terms of the GNU Lesser General Public License as published by the
@@ -221,8 +221,8 @@ sup_startUp:
        very beginning of the RAM. This happens only if it is started by SW reset caused by
        an application. In case of a power-on reset, the RAM is undefined and must not be
        read before initialization. Therefore, we first check the reset reason and then read
-       the RAM in case of a SW reset. Note, placing this code here means that the FBL won't
-       execute on core Z7_1. */
+       the RAM in case of a SW reset.
+         Note, placing this code here means that the FBL won't execute on cores Z4_B and Z2. */
     e_lis       r3, MC_RGM_DES@ha   /* Destructive Event Status Register, RM 55.3.1 */
     e_lwz       r3, MC_RGM_DES@l(r3)/* r3 = MC_RGM_DES */
     se_cmpi     r3, 0               /* Compare with zero, DES needs to have not bit set */
