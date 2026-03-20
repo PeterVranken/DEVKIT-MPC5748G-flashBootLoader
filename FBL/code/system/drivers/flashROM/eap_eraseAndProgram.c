@@ -38,7 +38,7 @@
 
 #include "eap_eraseAndProgram.h"
 
-#if TEST_WITH_MOCKUP != 1
+#if EAP_TEST_WITH_MOCKUP != 1
 
 #include <stdint.h>
 #include <stdbool.h>
@@ -132,10 +132,55 @@ static const flashBlockDesc_t RODATA(flashBlockDescAry)[] =
     {.addrFrom = 0x014C0000u, .addrTo = 0x01500000u, .idxPartition = 9u, .idxLockReg = 2u, .bitMaskLockReg = 0x00080000u,},  /* 256KB Code Flash block */
     {.addrFrom = 0x01500000u, .addrTo = 0x01540000u, .idxPartition = 9u, .idxLockReg = 2u, .bitMaskLockReg = 0x00100000u,},  /* 256KB Code Flash block */
     {.addrFrom = 0x01540000u, .addrTo = 0x01580000u, .idxPartition = 9u, .idxLockReg = 2u, .bitMaskLockReg = 0x00200000u,},  /* 256KB Code Flash block */
-#elif defined(MCU_MPC5775B) || defined(MCU_MPC5775E)
-# error Specify flash block configuration for MPC5775B/E
-#elif defined(MCU_MPC5777C)
-# error Specify flash block configuration for MPC5777C
+
+#elif defined(MCU_MPC5775B) || defined(MCU_MPC5775E) || defined(MCU_MPC5777C)
+    /* Caution! In the RM75, 4.1, Table 4-2, p.98, the RWW partitions of the 16 256kB
+       blocks are shown as 6 und 7. At RM75, 26.1.3.3, pp.867f, they are shown as 9 and 8.
+       Even worse, the bits of the register are not clearly related to particular flash
+       blocks. The only indication given is the name of the first 256kB block, "Boot code".
+       This seems to indicate that the MSBit belongs to the flash block with lowest
+       address, probably followed by blocks with higher address at less significant bits.
+         NXP sample code: It expects the 16 blocks in the lower half word of the register!
+       This is the pattern, we see also for the MPC5748G and the MPC5777C, which is anyway
+       known as widely with the MPC5775B/E. Therefore, we assume Table 4-2 as wrong. */
+    {.addrFrom = 0x00800000u, .addrTo = 0x00840000u, .idxPartition = 6u, .idxLockReg = 2u, .bitMaskLockReg = 0x00000001u,}, /* 256kB Large Boot             */
+    {.addrFrom = 0x00840000u, .addrTo = 0x00880000u, .idxPartition = 6u, .idxLockReg = 2u, .bitMaskLockReg = 0x00000002u,}, /* 256kB Large Application code */
+    {.addrFrom = 0x00880000u, .addrTo = 0x008C0000u, .idxPartition = 6u, .idxLockReg = 2u, .bitMaskLockReg = 0x00000004u,}, /* 256kB Large Application code */
+    {.addrFrom = 0x008C0000u, .addrTo = 0x00900000u, .idxPartition = 6u, .idxLockReg = 2u, .bitMaskLockReg = 0x00000008u,}, /* 256kB Large Application code */
+    {.addrFrom = 0x00900000u, .addrTo = 0x00940000u, .idxPartition = 6u, .idxLockReg = 2u, .bitMaskLockReg = 0x00000010u,}, /* 256kB Large Application code */
+    {.addrFrom = 0x00940000u, .addrTo = 0x00980000u, .idxPartition = 6u, .idxLockReg = 2u, .bitMaskLockReg = 0x00000020u,}, /* 256kB Large Application code */
+    {.addrFrom = 0x00980000u, .addrTo = 0x009C0000u, .idxPartition = 6u, .idxLockReg = 2u, .bitMaskLockReg = 0x00000040u,}, /* 256kB Large Application code */
+    {.addrFrom = 0x009C0000u, .addrTo = 0x00A00000u, .idxPartition = 6u, .idxLockReg = 2u, .bitMaskLockReg = 0x00000080u,}, /* 256kB Large Application code */
+    {.addrFrom = 0x00A00000u, .addrTo = 0x00A40000u, .idxPartition = 7u, .idxLockReg = 2u, .bitMaskLockReg = 0x00000100u,}, /* 256kB Large Application code */
+    {.addrFrom = 0x00A40000u, .addrTo = 0x00A80000u, .idxPartition = 7u, .idxLockReg = 2u, .bitMaskLockReg = 0x00000200u,}, /* 256kB Large Application code */
+    {.addrFrom = 0x00A80000u, .addrTo = 0x00AC0000u, .idxPartition = 7u, .idxLockReg = 2u, .bitMaskLockReg = 0x00000400u,}, /* 256kB Large Application code */
+    {.addrFrom = 0x00AC0000u, .addrTo = 0x00B00000u, .idxPartition = 7u, .idxLockReg = 2u, .bitMaskLockReg = 0x00000800u,}, /* 256kB Large Application code */
+    {.addrFrom = 0x00B00000u, .addrTo = 0x00B40000u, .idxPartition = 7u, .idxLockReg = 2u, .bitMaskLockReg = 0x00001000u,}, /* 256kB Large Application code */
+    {.addrFrom = 0x00B40000u, .addrTo = 0x00B80000u, .idxPartition = 7u, .idxLockReg = 2u, .bitMaskLockReg = 0x00002000u,}, /* 256kB Large Application code */
+    {.addrFrom = 0x00B80000u, .addrTo = 0x00BC0000u, .idxPartition = 7u, .idxLockReg = 2u, .bitMaskLockReg = 0x00004000u,}, /* 256kB Large Application code */
+    {.addrFrom = 0x00BC0000u, .addrTo = 0x00C00000u, .idxPartition = 7u, .idxLockReg = 2u, .bitMaskLockReg = 0x00008000u,}, /* 256kB Large Application code */
+# if defined(MCU_MPC5777C)
+    /* The MPC7577C has the same memory architecture as the MPC5775B/E, only the further 16
+       large blocks are populated. */
+    {.addrFrom = 0x00C00000u, .addrTo = 0x00C40000u, .idxPartition = 8u, .idxLockReg = 2u, .bitMaskLockReg = 0x00010000u,}, /* 256kB Large Boot             */
+    {.addrFrom = 0x00C40000u, .addrTo = 0x00C80000u, .idxPartition = 8u, .idxLockReg = 2u, .bitMaskLockReg = 0x00020000u,}, /* 256kB Large Application code */
+    {.addrFrom = 0x00C80000u, .addrTo = 0x00CC0000u, .idxPartition = 8u, .idxLockReg = 2u, .bitMaskLockReg = 0x00040000u,}, /* 256kB Large Application code */
+    {.addrFrom = 0x00CC0000u, .addrTo = 0x00D00000u, .idxPartition = 8u, .idxLockReg = 2u, .bitMaskLockReg = 0x00080000u,}, /* 256kB Large Application code */
+    {.addrFrom = 0x00D00000u, .addrTo = 0x00D40000u, .idxPartition = 8u, .idxLockReg = 2u, .bitMaskLockReg = 0x00100000u,}, /* 256kB Large Application code */
+    {.addrFrom = 0x00D40000u, .addrTo = 0x00D80000u, .idxPartition = 8u, .idxLockReg = 2u, .bitMaskLockReg = 0x00200000u,}, /* 256kB Large Application code */
+    {.addrFrom = 0x00D80000u, .addrTo = 0x00DC0000u, .idxPartition = 8u, .idxLockReg = 2u, .bitMaskLockReg = 0x00400000u,}, /* 256kB Large Application code */
+    {.addrFrom = 0x00DC0000u, .addrTo = 0x00E00000u, .idxPartition = 8u, .idxLockReg = 2u, .bitMaskLockReg = 0x00800000u,}, /* 256kB Large Application code */
+    {.addrFrom = 0x00E00000u, .addrTo = 0x00E40000u, .idxPartition = 9u, .idxLockReg = 2u, .bitMaskLockReg = 0x01000000u,}, /* 256kB Large Application code */
+    {.addrFrom = 0x00E40000u, .addrTo = 0x00E80000u, .idxPartition = 9u, .idxLockReg = 2u, .bitMaskLockReg = 0x02000000u,}, /* 256kB Large Application code */
+    {.addrFrom = 0x00E80000u, .addrTo = 0x00EC0000u, .idxPartition = 9u, .idxLockReg = 2u, .bitMaskLockReg = 0x04000000u,}, /* 256kB Large Application code */
+    {.addrFrom = 0x00EC0000u, .addrTo = 0x00F00000u, .idxPartition = 9u, .idxLockReg = 2u, .bitMaskLockReg = 0x08000000u,}, /* 256kB Large Application code */
+    {.addrFrom = 0x00F00000u, .addrTo = 0x00F40000u, .idxPartition = 9u, .idxLockReg = 2u, .bitMaskLockReg = 0x10000000u,}, /* 256kB Large Application code */
+    {.addrFrom = 0x00F40000u, .addrTo = 0x00F80000u, .idxPartition = 9u, .idxLockReg = 2u, .bitMaskLockReg = 0x20000000u,}, /* 256kB Large Application code */
+    {.addrFrom = 0x00F80000u, .addrTo = 0x00FC0000u, .idxPartition = 9u, .idxLockReg = 2u, .bitMaskLockReg = 0x40000000u,}, /* 256kB Large Application code */
+    {.addrFrom = 0x00FC0000u, .addrTo = 0x01000000u, .idxPartition = 9u, .idxLockReg = 2u, .bitMaskLockReg = 0x80000000u,}, /* 256kB Large Application code */
+# endif
+#else
+# error Specify flash block configuration for still unknown MCU
 #endif
 };
 
@@ -153,7 +198,7 @@ static const eap_quadPageProgramBuffer_t *BSS_OS(_pPrgDataBuf) = NULL;
  */
 static void disableAllFlashBlocks(void)
 {
-#if defined(MCU_MPC5748G)
+#if defined(MCU_MPC5748G) || defined(MCU_MPC5775B) || defined(MCU_MPC5775E)
 # define LOCK_ALL_BLKS_0    0xBFFFFFFFu
 # define LOCK_ALL_BLKS_1    0xFFFFFFFFu
 # define LOCK_ALL_BLKS_2    0xFFFFFFFFu
@@ -162,8 +207,6 @@ static void disableAllFlashBlocks(void)
 # define SELECT_NO_BLK_1    0x00000000u
 # define SELECT_NO_BLK_2    0x00000000u
 # define SELECT_NO_BLK_3    0x00000000u
-#elif defined(MCU_MPC5775B) || defined(MCU_MPC5775E)
-# error Specify flash block configuration for MPC5775B/E
 #elif defined(MCU_MPC5777C)
 # error Specify flash block configuration for MPC5777C
 #endif
@@ -218,7 +261,7 @@ static void enableFlashBlocks(uint32_t addressFrom, uint32_t noBytes, bool isEra
     /* We always program single quad-pages. */
     assert(isErase ||  noBytes == EAP_C55FMC_SIZE_OF_QUAD_PAGE);
 
-    /* If we see an overflow then we definitly have an invalid address space. (ROM at the
+    /* If we see an overflow then we definitely have an invalid address space. (ROM at the
        very end of the address space is not supported by the implementation.) A valid adress
        ranges is a prerequiste of calling this function. */
     assert(addressTo >= addressFrom);
@@ -292,7 +335,8 @@ static inline void invalidateDCache(uint32_t addrOfQuadPage)
     /* The e200z4204n3 core's line size, see RM48 62.7.1, p.3111. */
     const uint32_t sizeofCacheLine = 32u;
 #elif defined(MCU_MPC5775B) || defined(MCU_MPC5775E)
-# error Specify cache line size for MPC5775B/E
+    /* The e200z759n3 core's line size, see RMZ7 11.2, pp.586f. */
+    const uint32_t sizeofCacheLine = 32u;
 #elif defined(MCU_MPC5777C)
 # error Specify cache line size for MPC5777C
 #endif
@@ -408,8 +452,8 @@ static bool verifyQuadPage(const eap_quadPageProgramBuffer_t * const pPrgDataBuf
  */
 static void abortEraseAndProgram(void)
 {
-    /* The mode of operation bits are disabled in distinct steps. This is a rule from
-       the bit locking. RM48, 74.6, Table 74-3, p.3679. */
+    /* The mode of operation bits are disabled in distinct steps. This is a rule from the
+       bit locking. RM48, 74.6, Table 74-3, p.3679. */
     // TODO Abortion is likely not properly implemented. Compare conditions RM48, 74.5.1, p.3656, for resetting EHV. However, seems to affect only modes, we don't use anyway
     C55FMC->MCR &= ~C55FMC_MCR_PSUS_MASK;
     C55FMC->MCR &= ~C55FMC_MCR_ESUS_MASK;
@@ -436,7 +480,7 @@ void eap_osInitFlashRomDriver(void)
         const flashBlockDesc_t * const pBlkDesc = &flashBlockDescAry[idxBlk];
 
         /* The flash driver generally doesn't consider overflow in address calculations and
-           it uses end addresses exclusively. This make the code fail for architectures,
+           it uses end addresses exclusively. This makes the code fail for architectures,
            which have a flash ROM block at the very end of the implementation range of
            address variables, which uses type uint32_t. The end address of such a block
            would become 0 - which could be correct but which is simply not supported. (If
@@ -460,19 +504,17 @@ void eap_osInitFlashRomDriver(void)
         assert(HAS_ONE_BIT_SET(pBlkDesc->bitMaskLockReg));
         #undef HAS_ONE_BIT_SET
 
-# if defined(MCU_MPC5748G)
-        /* For the MPC5748G, the implementation of the address range validity is based on
-           the fact, that all flash blocks form a single, contiguous address space. Gaps
-           are not considered. */
+# if defined(MCU_MPC5748G) || defined(MCU_MPC5775B) || defined(MCU_MPC5775E)
+        /* For the MPC5748G and MPC5775B/E, the implementation of the address range
+           validity is based on the fact, that all flash blocks form a single, contiguous
+           address space. Gaps are not considered. */
         assert(idxBlk == 0u  ||  pBlkDesc->addrFrom == flashBlockDescAry[idxBlk-1].addrTo);
 # endif
-
-
     } /* for(Check flash block specification table entries for plausibility) */
 
-# if defined(MCU_MPC5748G)
-    /* For the MPC5748G, the implementation of the address range validity uses hard-coded
-       address boundaries. We need to check consistency. */
+# if defined(MCU_MPC5748G) || defined(MCU_MPC5775B) || defined(MCU_MPC5775E)
+    /* For the MPC5748G and MPC5775B/E, the implementation of the address range validity
+       uses hard-coded address boundaries. We need to check consistency. */
     assert(rom_isValidFlashAddressRange(flashBlockDescAry[0].addrFrom, /*size*/ 0u)
            && !rom_isValidFlashAddressRange(flashBlockDescAry[0].addrFrom-1u, /*size*/ 0u)
            && rom_isValidFlashAddressRange
@@ -484,10 +526,10 @@ void eap_osInitFlashRomDriver(void)
                                 , /*size*/ 0u
                                 )
           );
+# elif defined(MCU_MPC5777C)
+#  error Implement flash block table check for MPC5777C
 # endif
-
 #endif /* DEBUG */
-
 } /* eap_osInitFlashRomDriver */
 
 
@@ -778,105 +820,4 @@ rom_errorCode_t eap_osGetStatusProgramQuadPage(void)
 
 } /* eap_osGetStatusProgramQuadPage */
 
-
-/***************************** Test, temporary code ******************/
-//
-//#include "stm_systemTimer.h"
-//
-//eap_quadPageProgramBuffer_t BSS_OS(eap_prgDataBuf) =
-//{
-//    .address = 0u,
-//    .data_b =
-//    {
-//        [0 ... (EAP_C55FMC_SIZE_OF_QUAD_PAGE-1u)] = 0u,
-//    },
-//};
-//unsigned int eap_noWaitCyclesErase = 0u
-//           , eap_noWaitCyclesPgm = 0u
-//           , eap_cntFsm = 0u;
-//rom_errorCode_t eap_resultStartErase = rom_err_invalidErrorCode
-//              , eap_resultGetStatusErase = rom_err_invalidErrorCode
-//              , eap_resultStartPgm = rom_err_invalidErrorCode
-//              , eap_resultGetStatusPgm = rom_err_invalidErrorCode;
-//uint32_t eap_tiPgmQuadPageIn12p5ns = UINT32_MAX;
-//
-///** Return true if state machine requires continued calling for completing the process. */
-//bool eap_firstTest(bool start)
-//{
-//    static enum {idle, init, error, waitForErase, program, success, } state_ SECTION(.sdata.OS.var) = idle;
-//
-//    if(start)
-//    {
-//        assert(state_ == idle  ||  state_ == success);
-//        state_ = init;
-//    }
-//    else
-//        assert(state_ == waitForErase  ||  state_ == program);
-//
-//    if(state_ == init)
-//    {
-//        eap_cntFsm = 0u;
-//        eap_prgDataBuf.address = 0xFC0100u;
-//        static uint8_t SDATA_OS(startVal_) = 1u;
-//        for(unsigned int u=0u; u<EAP_C55FMC_SIZE_OF_QUAD_PAGE; ++u)
-//            eap_prgDataBuf.data_b[u] = (startVal_ + u) & 0xFFu;
-//        ++ startVal_;
-//
-//        eap_resultStartErase = eap_osStartEraseFlashBlocks( eap_prgDataBuf.address
-//                                                          , EAP_C55FMC_SIZE_OF_QUAD_PAGE
-//                                                          );
-//        if(eap_resultStartErase == rom_err_processPending)
-//        {
-//            eap_noWaitCyclesErase = 0u;
-//            state_ = waitForErase;
-//        }
-//        else
-//            state_ = error;
-//    }
-//    else if(state_ == waitForErase)
-//    {
-//        ++ eap_noWaitCyclesErase;
-//        eap_resultGetStatusErase = eap_osGetStatusEraseFlashBlocks();
-//
-//        if(eap_resultGetStatusErase == rom_err_noError)
-//            state_ = program;
-//        else if(eap_resultGetStatusErase != rom_err_processPending)
-//            state_ = error;
-//    }
-//    else if(state_ == program)
-//    {
-//        eap_tiPgmQuadPageIn12p5ns = stm_osGetSystemTime(/*idxTimer*/ 0u);
-//        eap_resultStartPgm = eap_osStartProgramQuadPage(&eap_prgDataBuf);
-//
-//        if(eap_resultStartPgm == rom_err_processPending)
-//        {
-//            eap_noWaitCyclesPgm = 0u;
-//            while(true)
-//            {
-//                eap_resultGetStatusPgm = eap_osGetStatusProgramQuadPage();
-//                if(eap_resultGetStatusPgm == rom_err_processPending)
-//                    ++ eap_noWaitCyclesPgm;
-//                else
-//                {
-//                    if(eap_resultGetStatusPgm == rom_err_noError)
-//                        state_ = success;
-//                    else
-//                        state_ = error;
-//
-//                    break;
-//                }
-//            }
-//            eap_tiPgmQuadPageIn12p5ns = stm_osGetSystemTime(/*idxTimer*/ 0u)
-//                                        - eap_tiPgmQuadPageIn12p5ns;
-//        }
-//        else
-//        {
-//            state_ = error;
-//            eap_tiPgmQuadPageIn12p5ns = stm_osGetSystemTime(/*idxTimer*/ 0u)
-//                                        - eap_tiPgmQuadPageIn12p5ns;
-//        }
-//    }
-//
-//    return state_ != error  &&  state_ != success;
-//}
-#endif /* TEST_WITH_MOCKUP */
+#endif /* EAP_TEST_WITH_MOCKUP */

@@ -37,7 +37,7 @@
 
 #include "eap_eraseAndProgram.h"
 
-#if TEST_WITH_MOCKUP == 1
+#if EAP_TEST_WITH_MOCKUP == 1
 
 #include <stdint.h>
 #include <stdbool.h>
@@ -56,6 +56,9 @@
     the emulation behaves identically to the real hardware (with respect to timing). */
 #define LOG_PROGRAMMED_DATA     0
 
+/* TODO Should better be a platform switch not an MCU dependency. */
+#if defined(MCU_MPC5748G)
+
 /** The STM timer used for timeouts by zero based index. */
 #define TIMER 2u
 
@@ -64,9 +67,25 @@
 #define TI_MS(tiInMs) ((625u*(tiInMs) + 1u) / 2u)
 
 /** Helper: Define a wait time span in ms and rescale to the clock rate of the selected STM
-    timer, #TIMER. Note, \a tiInMs must not exceed 858993457. (Overflow is not handled.) */
+    timer, #TIMER. Note, \a tiInUs must not exceed 858993457. (Overflow is not handled.) */
 #define TI_US(tiInUs) ((5u*(tiInUs) + 8u) >> 4)
 
+#elif defined(MCU_MPC5775B) || defined(MCU_MPC5775E)
+
+/** The STM timer used for timeouts by zero based index. */
+#define TIMER
+
+/** Helper: Define a wait time span in ms and rescale to the clock rate of the STM timer.
+    Note, \a tiInMs must not exceed 429496. (Overflow is not handled.) */
+#define TI_MS(tiInMs) (10000u*(tiInMs))
+
+/** Helper: Define a wait time span in ms and rescale to the clock rate of the STM timer.
+    Note, \a tiInUs must not exceed 429496729. (Overflow is not handled.) */
+#define TI_US(tiInUs) (10u*(tiInUs))
+
+#elif defined(MCU_MPC5777C)
+# error Specify timer for MPC5777C
+#endif
 
 /*
  * Local type definitions
@@ -86,7 +105,9 @@
 static enum {state_idle, state_erasing, state_programming} _state SECTION(.data.OS._state) =
                                                                                  state_idle;
 
-/** When will the pending operation complete? Unit is #STM_TIMER_2_PERIOD_IN_NS, 3.2us. */
+/** When will the pending operation complete? Unit depends on the platform; for the
+    DEVKIT-MPC5758G it is #STM_TIMER_2_PERIOD_IN_NS, 3.2us, for the Tyson board it is
+    #BSW_SYSTEM_TIMER_PERIOD_IN_NS, 100ns. */
 static uint32_t DATA_OS(_tiWaitEnd) = 0u;
 
 /*
@@ -96,11 +117,17 @@ static uint32_t DATA_OS(_tiWaitEnd) = 0u;
 /** 
  * Set time, which an emulated process lasts.
  *   @param[in] tiPendingInMs
- * The time to wait for in ms. Range is 0..6871947.
+ * The time to wait for in ms. Range is 0..6871947 on the DEVKIT-MPC5748G and 0..429496 on the Tyson board.
  */
 static inline void setTiPendingInMs(uint32_t tiPendingInMs)
 {
+#if defined(MCU_MPC5748G)
     assert(tiPendingInMs < 6871947u);
+#elif defined(MCU_MPC5775B) || defined(MCU_MPC5775E)
+    assert(tiPendingInMs < 429496u);
+#elif defined(MCU_MPC5777C)
+# error Specify range for MPC5777C
+#endif
     _tiWaitEnd = stm_osGetSystemTime(TIMER) + TI_MS(tiPendingInMs);
 }
 
@@ -108,11 +135,17 @@ static inline void setTiPendingInMs(uint32_t tiPendingInMs)
 /** 
  * Set time, which an emulated process lasts.
  *   @param[in] tiPendingInUs
- * The time to wait for in us. Range is 0..858993457.
+ * The time to wait for in us. Range is 0..858993457 on the DEVKIT-MPC5748G and 0..429496729 on the Tyson board.
  */
 static inline void setTiPendingInUs(uint32_t tiPendingInUs)
 {
+#if defined(MCU_MPC5748G)
     assert(tiPendingInUs < 858993457u);
+#elif defined(MCU_MPC5775B) || defined(MCU_MPC5775E)
+    assert(tiPendingInUs < 429496729u);
+#elif defined(MCU_MPC5777C)
+# error Specify range for MPC5777C
+#endif
     _tiWaitEnd = stm_osGetSystemTime(TIMER) + TI_US(tiPendingInUs);
 }
 
@@ -344,4 +377,4 @@ rom_errorCode_t eap_osGetStatusProgramQuadPage(void)
 
 } /* eap_osGetStatusProgramQuadPage */
 
-#endif /* TEST_WITH_MOCKUP */
+#endif /* EAP_TEST_WITH_MOCKUP */

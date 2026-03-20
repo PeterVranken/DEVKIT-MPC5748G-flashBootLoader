@@ -100,7 +100,7 @@
  */
 
 /** Initialize the module. */
-bool ccp_osInitCcpTask(uint8_t tiTillResetToAppInMs);
+bool ccp_osInitCcpTask(uint16_t tiTillResetToAppInMs);
 
 /** The OS task, which is activated either on reception of a CCP CAN message. */
 void ccp_taskOsRxCcp(uint32_t taskParam);

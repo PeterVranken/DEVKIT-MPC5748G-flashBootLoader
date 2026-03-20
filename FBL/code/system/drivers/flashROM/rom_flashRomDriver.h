@@ -29,7 +29,7 @@
 
 #include "typ_types.h"
 
-/** @todo Define either MCU_MPC5748G, MCU_MPC5775B or MCU_MPC5775E to select the MCU, which
+/** TODO Define either MCU_MPC5748G, MCU_MPC5775B or MCU_MPC5775E to select the MCU, which
     this module is compiled for. */
 #define MCU_MPC5748G
 
@@ -41,7 +41,7 @@
    user command line interface in the QM process. Never set this flag to 1 in a production
    build! */
 #ifdef DEBUG
-# define ROM_TEST_BUILD_WITH_ERROR_INJECTION 1
+# define ROM_TEST_BUILD_WITH_ERROR_INJECTION 0
 #else
 # define ROM_TEST_BUILD_WITH_ERROR_INJECTION 0
 #endif

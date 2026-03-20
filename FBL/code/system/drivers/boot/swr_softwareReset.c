@@ -35,8 +35,21 @@
 #include <stdio.h>
 #include <assert.h>
 
-#include "MPC5748G.h"
 #include "rtos.h"
+#include "rom_flashRomDriver.h"
+
+/* Include the appropriate MCU header. */
+#if defined(MCU_MPC5748G)
+#include "MPC5748G.h"
+#elif defined(MCU_MPC5775B)
+# include "MPC5775B.h"
+#elif defined(MCU_MPC5775E)
+# include "MPC5775E.h"
+#elif defined(MCU_MPC5777C)
+# include "MPC5777C.h"
+#else
+# error Unsupported MCU configured
+#endif
 
 /*
  * Defines
@@ -92,10 +105,17 @@ void swr_osSoftwareReset(uint32_t bootFlag)
     * pResetInfo++ = SWR_MAGIC_IS_BOOT_FLAG_VALID;
     * pResetInfo   = bootFlag;
 
+#if defined(MCU_MPC5748G)
     /* Request mode transition to RESET mode (0x0) by write of key, followed by
        inverted key. RM48 38.3.2, pp.1096f. */
     MC_ME->MCTL = MC_ME_MCTL_TARGET_MODE(0x0) | MC_ME_MCTL_KEY(0x5AF0);
     MC_ME->MCTL = MC_ME_MCTL_TARGET_MODE(0x0) | MC_ME_MCTL_KEY(0xA50F);
+#elif defined(MCU_MPC5775B) || defined(MCU_MPC5775E)
+    /* Request a software reset. */
+    SIU->SRCR = SIU_SRCR_SSR(1u);
+#elif defined(MCU_MPC5777C)
+# error Implement swr_osSoftwareReset for MPC5777C
+#endif
 
     /* Halt all SW execution until the reset is executed. */
     while(true)

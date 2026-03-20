@@ -82,6 +82,9 @@ enum tds_taskState_t { tds_ts_idle
 /* Start the verification of the signature. */
 bool tds_osStartVerificationOfSignature(void);
 
+/* Clear the buffer with the authentification data, i.e., seed and key. */
+void tds_osResetAuthenticationData(void);
+
 /* Check the progress of the verification of the digital signature. */
 enum tds_taskState_t tds_getStateOfVerificationTask(void);
 

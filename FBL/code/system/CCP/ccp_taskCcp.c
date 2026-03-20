@@ -27,12 +27,16 @@
  *   initFsm
  *   checkForDownloadKey
  *   isServiceResponseAddress
+ *   setCanRxErr
+ *   setCanRxErrInternally
+ *   setCanTxErrInternally
  *   setTimeout
  *   checkTimeout
  *   discardCro
  *   finalizeDtoMsg
  *   readU32FromCro
  *   writeMta0IntoDto
+ *   isValidFlashAddressRangeForProgram
  *   isFlashDriverReady
  *   finishDisconnect
  *   onDisconnect
@@ -68,7 +72,6 @@
 #include <assert.h>
 
 #include "typ_types.h"
-#include "apt_applicationTask.h" // TODO Temporary interface for reset via CLI
 #include "bsw_basicSoftware.h"
 #include "rtos.h"
 #include "cdr_canDriverAPI.h"
@@ -260,15 +263,15 @@ static enum
 /** The time-to-reset counter states. */
 static enum
 {
-    stReset_unlimitedOperation, /**< No reset is scheduled at all, FBL runs forever. */    
+    stReset_unlimitedOperation, /**< No reset is scheduled at all, FBL runs forever. */
     stReset_launchFbl,  /**< Reset is scheduled and will (re-)launch the FBL after reset. */
     stReset_launchApp,  /**< Reset is scheduled and will launch the flashed application. */
-    
+
 } _stateScheduledReset SECTION(.sdata.OS._stateScheduledReset) = stReset_unlimitedOperation;
 
 /** The counter till reset. Unit is Milliseconds. Reset happens at counter value 0 and if
     _stateScheduledReset is not \a stReset_unlimitedOperation. */
-static uint8_t _tiTillResetInMs = 0;
+static uint16_t _tiTillResetInMs = 0;
 
 /*
  * Function implementation
@@ -280,7 +283,7 @@ static uint8_t _tiTillResetInMs = 0;
 static inline void resetAuthentication(void)
 {
     _stateAuthentication = stKey_noAuthenticationYet;
-    memset(&tds_authenticationData, 0, sizeof(tds_authenticationData));
+    tds_osResetAuthenticationData();
 
 } /* resetAuthentication */
 
@@ -319,19 +322,6 @@ static void initFsm(void)
  */
 static bool checkForDownloadKey()
 {
-// TODO SET_MTA könnte anderen Adresscheck benutzen als UPLOAD: Ergebnisse von XXX_SERVICE
-// sind erlaubt für UPLOAD, aber nicht für SET_MTA.
-// TODO stateAuthentication könnte neuen Status "angefragt" bekommen, der in DIAG_SERVIVE(1)
-// gesetzt wird. Er killt bestehende Authentifizierung und ist Voraussetzung für den Check
-// nach Upload. Immerhin kann der Client jederzeit und ungefragt und ohne DIAG_SERVICE(1)
-// an die Adresse hochladen - das sollte dann nicht jedesmal die Authentifizierung
-// auslösen.
-// TODO Zeitsperre: Feststellen, ob falscher Schlüssel (insb. alles 0, alles FF) auch 650ms
-// braucht. Wenn ja, dann ist keine weitere Zeitsperre für Authentifizierungsversuche
-// erforderlich.
-// TODO Authentifizierungsergebnis anwenden in den meisten Services. Bei UPLOAD nicht, wenn
-// Seed hochgeladen wird, bei DOWNLOAD nicht, wenn Key runtergeladen wird.
-
     /* We don't really get a clear signal or notification (e.g., by action service), when
        the key is entirely downloaded. We assume the normal doing of the CCP client,
        downloading with rising MTA. If the MTA reaches the end of the agreed buffer then
@@ -394,6 +384,34 @@ static inline bool isServiceResponseAddress(bool isUpload, uint32_t address, uin
                  );
 } /* isServiceResponseAddress */
 
+
+/**
+ * Set a CAN Rx error from another CPU context, e.g., the CAN ISR.
+ */
+static inline void setCanRxErr(void)
+{
+    ++ _ccpFsm.canRxErrCnt;
+}
+
+
+/**
+ * Set a CAN Rx error from the CCP task. This method must not be used from another context, e.g., the CAN ISR.
+ */
+static inline void setCanRxErrInternally(void)
+{
+    -- _ccpFsm.canRxErrAck;
+}
+
+
+/**
+ * Set a CAN Tx error from the CCP task. This method must not be used from another context, e.g., the CAN ISR.
+ */
+static inline void setCanTxErrInternally(void)
+{
+    _ccpFsm.canTxErr = true;
+}
+
+
 /**
  * Initialize the module. Needs to be called prior to the very first activation of the CCP
  * task.
@@ -404,14 +422,14 @@ static inline bool isServiceResponseAddress(bool isUpload, uint32_t address, uin
  * The typical operation of the FBL is running only for a short while, to snoop for
  * potential CCP CONNECT requests from a CCP client but to start the flashed application if
  * there's no such request. This is the time in Milliseconds to wait for a connect
- * request. Range is 1..255ms.\n
+ * request. Range is 1..65535ms.\n
  *   If there is no application in flash ROM then this time can be set to 0. A value of
  * zero means the FBL will operated unlimited, no reset will be triggered.
  *   @remark
  * This function depends on the CAN driver CDR, which needs to be initialized before
  * calling this function.
  */
-bool ccp_osInitCcpTask(uint8_t tiTillResetToAppInMs)
+bool ccp_osInitCcpTask(uint16_t tiTillResetToAppInMs)
 {
     bool success = true;
 
@@ -512,7 +530,7 @@ bool ccp_osFilterForCcpMsg( bool * const pMsgConsumed
         {
             /* Report a CAN communication error to the CCP task. This is a fatal situation
                and a potentially open session will be closed. */
-            ++ _ccpFsm.canRxErrCnt;
+            setCanRxErr();
             *pMsgConsumed = false;
         }
 
@@ -650,20 +668,51 @@ static inline void writeMta0IntoDto(void)
 }
 
 
+
+/**
+ * Check if a memory address range is permitted for programming.\n
+ *   Basically, we use method rom_isValidFlashAddressRange from the flash ROM driver to
+ * check addresses but there may be additional conditions to consider.\n
+ *   The FBL for the MPC5775B/E disallows programming at the first addresses at 0x00800000;
+ * here, the MCU's reset logic supports a boot header. If the FBL would allow programming
+ * these bytes then an application could be programmed that overruled the FBL so that
+ * further erasure and re-progamming became impossible.
+ *   @param[in] address
+ * The first address of the memory area.
+ *   @param[in] size
+ * The length of the memory area in Byte.
+ */
+static bool isValidFlashAddressRangeForProgram(uint32_t address, uint32_t size)
+{
+#if defined(MCU_MPC5775B) || defined(MCU_MPC5775E)
+    /* We don't need a full check, all the rest is done by rom_isValidFlashAddressRange. */
+    if(address < 0x00800010u)
+        return false;
+#endif
+
+    return rom_isValidFlashAddressRange(address, size);
+
+#if defined(MCU_MPC5777C)
+# error Implement isValidFlashAddressRangeForProgram for MPC5777C
+#endif
+} /* isValidFlashAddressRangeForProgram */
+
+
+
 /**
  * Check if flash ROM driver is ready to accept next command.\n
  *   This method combines the drivers APIs for readiness for either erasure or programming.
  * It it returns \a true then any new command can be initiates.
- *   @todo
+ *   @remark
  * Combining the readiness APIs of the driver allows combining some wait states here in the
- * CCP protocol state machine, but it degrades the capabilities of the falsh ROM driver in
+ * CCP protocol state machine, but it degrades the capabilities of the flash ROM driver in
  * doing certain things in parallel. If we selectively use the original APIs of the driver,
  * then we would have to add some more specific wait states here in this state machine and
  * would become a bit more efficient. The gain is however little. The main effect is that
  * some program data could already be received and written to the driver, while erasure is
  * ongoing. (Which would be beneficial only if we massively increase the number of quad-page
- * buffers in the flash rom driver.) Complexity of the state machine rises as erasure is no
- * longer a synchronous command; a failure result could be reposrted only with delay (as it
+ * buffers in the flash ROM driver.) Complexity of the state machine rises as erasure is no
+ * longer a synchronous command; a failure result could be reported only with delay (as it
  * is anyway for CCP PROGRAM commands).
  */
 static bool isFlashDriverReady(void)
@@ -781,7 +830,7 @@ static void onSetMta(void)
 
 
 /**
- * When the availability and the correctness of the UPLOAD comand have been checked, then
+ * When the availability and the correctness of the UPLOAD command have been checked, then
  * this function completes the operation.\n
  *   This function is either called immediately on reception of a CCP UPLOAD command
  * or a bit later, when we first had to wait for the flash ROM driver becoming idle.
@@ -803,9 +852,17 @@ static void finishUpload(void)
     /* We still check for a pending fault in the flash ROM driver. (Resulting from an
        earlier command.) We still need to return this information to the CCP client. We do
        this by negative response code. */
-    finalizeDtoMsg(rom_osFetchLastError() == rom_err_noError? ccpCmdRespCode_noError
-                                                            : ccpCmdRespCode_paramOutOfRange
-                  );
+    const rom_errorCode_t errCode = rom_osFetchLastError();
+    if(errCode != rom_err_noError)
+    {
+        #if VERBOSE >= 1
+        iprintf( "Upload fails because of err code %u.\r\n", errCode);
+        #endif
+        finalizeDtoMsg(ccpCmdRespCode_paramOutOfRange);
+    }
+    else
+        finalizeDtoMsg(ccpCmdRespCode_noError);
+
     _ccpFsm.state = ccp_stateFsm_connected;
 
 } /* finishUpload */
@@ -817,9 +874,9 @@ static void finishUpload(void)
 static void onUpload(void)
 {
     _ccpFsm.noBytesToProcess = (unsigned)_ccpFsm.croMsg.payload[2];
-    const bool isValidAddrRange = rom_isValidFlashAddressRange( _ccpFsm.mta0
-                                                              , _ccpFsm.noBytesToProcess
-                                                              )
+    const bool isValidAddrRange = isValidFlashAddressRangeForProgram( _ccpFsm.mta0
+                                                                    , _ccpFsm.noBytesToProcess
+                                                                    )
                                   &&  _stateAuthentication == stKey_authentified
                                   || isServiceResponseAddress( /*isUpload*/ true
                                                              , _ccpFsm.mta0
@@ -827,9 +884,10 @@ static void onUpload(void)
                                                              );
     if(_ccpFsm.noBytesToProcess <= 5u && isValidAddrRange)
     {
-        /* Potentially, we switch from programming to uploading. This requires flushing a possibly pending
-           input buffer. The operation is very cheap. It doesn't matter doing it before every upload command. 
-           Maintaining and checking a status variable would likely cost more. */
+        /* Potentially, we switch from programming to uploading. This requires flushing a
+           possibly pending input buffer. The operation is very cheap. It doesn't matter
+           doing it before every upload command. Maintaining and checking a status variable
+           would likely cost more. */
         rom_osFlushProgramDataBuffer();
 
         if(isFlashDriverReady())
@@ -862,7 +920,7 @@ static void onUpload(void)
  *   This function is either called immediately on reception of a CCP DOWNLOAD command
  * or a bit later, when we first had to wait for the flash ROM driver becoming idle.\n
  *   Note, in contrast to the other functions finishXxx(), this function can't guarantee
- * that the CCP command an be finalized; it may initiate the long lasting authentication
+ * that the CCP command can be finalized; it may initiate the long lasting authentication
  * and would then enter a wait state for completion of the latter.
  */
 static void performDownload(void)
@@ -1108,9 +1166,9 @@ static void onProgram(bool isProgram6)
         _ccpFsm.noBytesToProcess = (unsigned)_ccpFsm.croMsg.payload[2];
         _ccpFsm.pDataToProgram = &_ccpFsm.croMsg.payload[3];
     }
-    const bool isValidAddrRange = rom_isValidFlashAddressRange( _ccpFsm.mta0
-                                                              , _ccpFsm.noBytesToProcess
-                                                              )
+    const bool isValidAddrRange = isValidFlashAddressRangeForProgram( _ccpFsm.mta0
+                                                                    , _ccpFsm.noBytesToProcess
+                                                                    )
                                   &&  _stateAuthentication == stKey_authentified;
     if(isValidAddrRange  &&  (isProgram6 || _ccpFsm.noBytesToProcess <= 5u))
     {
@@ -1168,7 +1226,7 @@ static void onDiagService(void)
         noResponseBytes = sizeof(tds_authenticationData.seed)
                           + sizeof(tds_authenticationData.addrOfKey);
     }
-    else if(serviceNo == diagSN_uploadVersionFbl 
+    else if(serviceNo == diagSN_uploadVersionFbl
             &&  _stateAuthentication == stKey_authentified
            )
     {
@@ -1183,20 +1241,20 @@ static void onDiagService(void)
         /* The MTA is invalidated as the service has not response. */
         _ccpFsm.mta0 = 0u;
         noResponseBytes = 0u;
-        
+
         #if VERBOSE >= 1
         iprintf( "ECU is soon reset by DIAG_SERVICE. %s will be launched after reset.\r\n"
                , serviceNo == diagSN_resetEcuToFbl? "FBL": "Flashed application"
                );
         #endif
-        
+
         /* Signal the reset and configure a short delay. Switching after flashing to the
            flashed application is in no way time critical, so a delay doesn't harm but
            allows the CCP client to still disconnect. */
         _stateScheduledReset = serviceNo == diagSN_resetEcuToApp
                                ? stReset_launchApp
                                : stReset_launchFbl;
-        
+
         /* Provide the time to send the DTO, to allow clean DISCONNECT and to transmit the
            console feedback to a potentially connected terminal. */
         _tiTillResetInMs = 200u;
@@ -1208,9 +1266,9 @@ static void onDiagService(void)
     }
 
     _ccpFsm.dtoMsg.payload[3] = noResponseBytes;
-    
+
     /* We don't need or support the data type information. */
-    _ccpFsm.dtoMsg.payload[4] = 0; 
+    _ccpFsm.dtoMsg.payload[4] = 0;
 
     finalizeDtoMsg(reponseCode);
 
@@ -1244,7 +1302,7 @@ static void onRxCroMsg(void)
                 /* Stop timeout till reset, if any. */
                 _stateScheduledReset = stReset_unlimitedOperation;
                 _tiTillResetInMs = 0u;
-                
+
                 #if VERBOSE >= 1
                 iprintf("Connected with CCP client.\r\n");
                 #endif
@@ -1333,9 +1391,20 @@ static void onRxCroMsg(void)
         break;
 
     default:
-        assert(false);
+        /* The other states are pending and can't accept a new CCP CRO message. */
+        setCanRxErrInternally();
+
+        #if VERBOSE >= 1
+        iprintf( "Unexpected CCP CRO command %u received in state %u.\r\n"
+               , _ccpFsm.croMsg.payload[0]
+               , (unsigned)_ccpFsm.state
+               );
+        #endif
+        /* No break here. */
+
     case ccp_stateFsm_aborting:
-        /* These other states ignore any incoming CRO message. */
+        /* Since we are anyway about to abort the communication because of previous errors,
+           we can silently drop the unexpected CRO message. */
         discardCro();
 
     } /* switch(Which state are we in?) */
@@ -1409,14 +1478,6 @@ static void onClockTick(void)
     if(_ccpFsm.tiWaitInMs > 0u)
         -- _ccpFsm.tiWaitInMs;
 
-    #warning Preliminary interface with CLI to reset
-    if(apt_restartApp != 0u  &&  _stateScheduledReset == stReset_unlimitedOperation)
-    {
-        iprintf("Restarting FBL by console command.\r\n");
-        _stateScheduledReset = stReset_launchFbl;
-        _tiTillResetInMs = 255u;
-    }
-    
     /* Reset state machine: Trigger a reset if commanded and delay time is elapsed. */
     if(_stateScheduledReset != stReset_unlimitedOperation)
     {
@@ -1424,10 +1485,13 @@ static void onClockTick(void)
            give some feedback and be able to properly close the CCP session. */
         if(_tiTillResetInMs > 0u)
             -- _tiTillResetInMs;
-        else if(_stateScheduledReset == stReset_launchApp)
-            swr_osSoftwareReset(SWR_BOOT_FLAG_START_APP);
         else
-            swr_osSoftwareReset(SWR_BOOT_FLAG_START_FBL);
+        {
+            if(_stateScheduledReset == stReset_launchApp)
+                swr_osSoftwareReset(SWR_BOOT_FLAG_START_APP);
+            else
+                swr_osSoftwareReset(SWR_BOOT_FLAG_START_FBL);
+        }
     }
 
     switch(_ccpFsm.state)
@@ -1445,7 +1509,7 @@ static void onClockTick(void)
         break;
 
     case ccp_stateFsm_authenticationBusy:
-        /* The valdation of the digital signation received as key for authentication is
+        /* The validation of the digital signature received as key for authentication is
            ongoing in a low priority background task. */
         {
             const enum tds_taskState_t stAuth = tds_getStateOfVerificationTask();
@@ -1605,9 +1669,6 @@ void ccp_taskOsRxCcp(uint32_t taskParam)
        that previous activation. */
     assert(noQueuedCcpMsgs > 0u  ||  noTimerTicks1ms > 0u);
 
-    static uint32_t SDATA_OS(cnt1ms_) = 0u;
-    cnt1ms_ += noTimerTicks1ms;
-
     /* Serve the CCP protocol for download of data and flashing only when the task was
        triggered by CAN Rx event(s). */
     if(noQueuedCcpMsgs > 0u)
@@ -1616,11 +1677,10 @@ void ccp_taskOsRxCcp(uint32_t taskParam)
         onRxCroMsg();
     }
 
+    checkForAsyncEvents();
+
     if(noTimerTicks1ms > 0u)
     {
-        // TODO Could be done in any task activation
-        checkForAsyncEvents();
-
         onClockTick();
 
         /* Run the flash ROM driver from the same task as the CCP protocol. This eliminates
@@ -1642,6 +1702,6 @@ void ccp_taskOsRxCcp(uint32_t taskParam)
             _ccpFsm.dtoMsg.isResponseReady = false;
         }
         else
-            _ccpFsm.canTxErr = true;
+            setCanTxErrInternally();
     }
-} /* ccp_taskOSRxCcp */
+} /* ccp_taskOsRxCcp */

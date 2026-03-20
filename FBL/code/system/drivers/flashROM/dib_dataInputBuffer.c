@@ -266,13 +266,13 @@ uint32_t dib_osWriteDataIntoBuffer( dib_pageProgramBuffer_t * const pBuf
         pBuf->state = dib_bufSt_filling;
     }
 
-    const uint32_t endAddrPage = pBuf->pageBuf.address + EAP_C55FMC_SIZE_OF_QUAD_PAGE;
-
     /* Check, how many bytes from the input fit into the quad-page, which is represented
        by the buffer. */
     uint32_t noBytesToCopy;
     if(GET_ADDR_OF_QUAD_PAGE(address) == pBuf->pageBuf.address)
     {
+        const uint32_t endAddrPage = pBuf->pageBuf.address + EAP_C55FMC_SIZE_OF_QUAD_PAGE;
+
         /* The address points into the buffer's quad-page. At least one byte will fit. */
         if(address + noBytes > endAddrPage)
             noBytesToCopy = endAddrPage - address;

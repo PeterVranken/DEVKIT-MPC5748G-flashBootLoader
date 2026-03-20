@@ -157,7 +157,7 @@ void rom_osInitFlashRomDriver(void)
  */
 bool rom_isValidFlashAddressRange(uint32_t address, uint32_t size)
 {
-#if defined(MCU_MPC5748G)
+#if defined(MCU_MPC5748G) || defined(MCU_MPC5775B) || defined(MCU_MPC5775E)
     const uint32_t endAddr = address + size;
 
     /* We can handle the overflow at the end of the 32 Bit address space very easily,
@@ -166,15 +166,22 @@ bool rom_isValidFlashAddressRange(uint32_t address, uint32_t size)
        will fail at many code locations in this case. */
     if(endAddr < address)
         return false;
+#endif
 
+#if defined(MCU_MPC5748G)
     /* The hard-coded limits are checked for consistency with the flash block configuration
        in the driver initialization. */
     return address >= 0x00FC8000u  &&  endAddr <= 0x01580000u;
 
 #elif defined(MCU_MPC5775B) || defined(MCU_MPC5775E)
-# error Implement rom_isValidFlashAddressRange for MPC5775B/E
+    /* The hard-coded limits are checked for consistency with the flash block configuration
+       in the driver initialization. */
+    return address >= 0x00800000u  &&  endAddr <= 0x00C00000u;
+
 #elif defined(MCU_MPC5777C)
 # error Implement rom_isValidFlashAddressRange for MPC5777C
+#else
+# error Selected MCU is not supported
 #endif
 } /* rom_isValidFlashAddressRange */
 
@@ -314,57 +321,33 @@ bool rom_osStartProgram(uint32_t address, const uint8_t *pDataToProgram, uint32_
        buffer space for accepting the command. */
     if(rom_osReadyToStartProgram() && rom_isValidFlashAddressRange(address, noBytes))
     {
-        if(_pPgmInputBuf == NULL)
+        while(noBytes > 0u)
         {
-            _pPgmInputBuf = dib_osAcquireInputBuffer();
-            assert(_pPgmInputBuf != NULL);
+            if(_pPgmInputBuf == NULL)
+            {
+                _pPgmInputBuf = dib_osAcquireInputBuffer();
+                assert(_pPgmInputBuf != NULL);
+            }
+
+            const uint32_t noBytesWritten = dib_osWriteDataIntoBuffer( _pPgmInputBuf
+                                                                     , address
+                                                                     , noBytes
+                                                                     , pDataToProgram
+                                                                     );
+            assert(noBytesWritten <= noBytes);
+            if(noBytesWritten < noBytes)
+            {
+                /* The bytes didn't all fit into the current buffer. Because the driver
+                   assumes that the bytes are written in the order of increasing addresses,
+                   it is clear that the buffer used so far is full and can be passed to the
+                   programming. */
+                dib_osReleaseBuffer(_pPgmInputBuf, /*submitForProgramming*/ true);
+                _pPgmInputBuf = NULL;
+            }
+            noBytes        -= noBytesWritten;
+            address        += noBytesWritten;
+            pDataToProgram += noBytesWritten;
         }
-
-        const uint32_t noBytesWritten = dib_osWriteDataIntoBuffer( _pPgmInputBuf
-                                                                 , address
-                                                                 , noBytes
-                                                                 , pDataToProgram
-                                                                 );
-        assert(noBytesWritten <= noBytes);
-        if(noBytesWritten < noBytes)
-        {
-            /* The bytes didn't all fit into the current buffer. Because the driver assumes
-               that the bytes are written in the order of increasing addresses, it is clear
-               that the buffer used so far is full and can be passed to the programming. */
-            dib_osReleaseBuffer(_pPgmInputBuf, /*submitForProgramming*/ true);
-
-            /* Those bytes, which couldn't be written into the previous buffer are written
-               into the next one. We know, that we will get another one because we had
-               checked this as precondition for accepting the write job. */
-            _pPgmInputBuf = dib_osAcquireInputBuffer();
-            assert(_pPgmInputBuf != NULL);
-#ifdef DEBUG
-            const uint32_t noBytesWritten2nd =
-#endif
-            dib_osWriteDataIntoBuffer( _pPgmInputBuf
-                                     , address + noBytesWritten
-                                     , noBytes - noBytesWritten
-                                     , pDataToProgram + noBytesWritten
-                                     );
-
-            /* The function is specified to allow at maximum EAP_C55FMC_SIZE_OF_QUAD_PAGE+1
-               bytes to write at once. If this assertion fires then this pre-condition of
-               the function call has been violated in a harmful, data loss-causing way.
-               Violations of the pre-condition, which are harmless and don't impact proper
-               functionality aren't reported:
-                 Only EAP_C55FMC_SIZE_OF_QUAD_PAGE+1 will fit even under worst conditions.
-                 Under worst conditions, the current buffer can't be used at all; it has
-               another quad-page address. The first byte to write is the last one of the
-               first acquired quad-page input buffer, so that the rest of the bytes will
-               entirely fill the second acquired input buffer. Acquisition of more input
-               buffers is imaginable but not guaranteed.
-                 More bytes than EAP_C55FMC_SIZE_OF_QUAD_PAGE+1 will most often fit but
-               there is no worst case guarantee. In particular, for the common use-case of
-               strictly sequentially writing all bytes, even 2*EAP_C55FMC_SIZE_OF_QUAD_PAGE
-               would always fit. */
-            assert(noBytesWritten2nd + noBytesWritten == noBytes);
-        }
-
         return true;
     }
     else

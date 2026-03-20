@@ -20,6 +20,7 @@
  */
 /* Module interface
  *   tds_osStartVerificationOfSignature
+ *   tds_osResetAuthenticationData
  *   tds_getStateOfVerificationTask
  *   tds_taskDigitalSignature
  * Local functions
@@ -36,6 +37,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <stdio.h>
+#include <string.h>
 #include <assert.h>
 
 #include "bsw_basicSoftware.h"
@@ -108,22 +110,22 @@ uint32_t tds_tiSignVerify = 0;
 
 /**
  * Start the verification of the signature.\n
- *   This call activates the background task to do the calculation. Pre-requistes of
+ *   This call activates the background task to do the calculation. Prerequisites of
  * calling this function is:\n
  * - Previous calls of terminated. tds_getStateOfVerificationTask() had been called until
- *   this function had signalled either \a tds_ts_verificationOk or \a
+ *   this function had signaled either \a tds_ts_verificationOk or \a
  *   tds_ts_verificationFailed. Overlapping calls of the activation task are not supported,
  *   undefined behavior results.\n
  * - There is only one caller of this method, or different callers are strictly synchronized
-     outside of this implementation. Re-entrancy is no granted.
+     outside of this implementation. Reentrancy is no granted.
  * - All required data for the verification, seed and key (aka digital signature), has been
- *   written to the global data struture \a tds_authenticationData.
- * - The caller needs to have the priviledges to activate a task using rtos_osSendEvent().
+ *   written to the global data structure \a tds_authenticationData.
+ * - The caller needs to have the privileges to activate a task using rtos_osSendEvent().
  *   @return
  * Get \a true if the verification task could be started. This will always be the case if
- * the pre-requisites have been considered. \a false will mainly happen, if
+ * the prerequisites have been considered. \a false will mainly happen, if
  * tds_getStateOfVerificationTask() had not been polled till termination, e.g., due to a
- * timeut condition.
+ * timeout condition.
  */
 bool tds_osStartVerificationOfSignature(void)
 {   
@@ -137,6 +139,18 @@ bool tds_osStartVerificationOfSignature(void)
     return success;
     
 } /* tds_osStartVerificationOfSignature */
+
+
+/**
+ * Unconditionally clear the buffer with the authentification data, i.e., seed and key. Can
+ * be done at any time, but will surely invalidate an authentification when done during the
+ * authentication procedure.
+ */
+void tds_osResetAuthenticationData(void)
+{
+    memset(&tds_authenticationData, 0, sizeof(tds_authenticationData));
+
+} /* tds_osResetAuthenticationData */
 
 
 /**

@@ -62,8 +62,8 @@
     . += ld_stackSizeOSCore0;
     . = ALIGN(8);
 
-    /* The end of the stack would normally 8 Byte aligned. We extend the alignment to
-       already fit the constraints of the next section; this way the required fill
+    /* The end of the stack would normally be 8 Byte aligned. We extend the alignment
+       to already fit the constraints of the next section; this way the required fill
        bytes contribute to our stack instead of being wasted. */
     ld_noBitsDmaRingBuffer = ABSOLUTE(10);/* The size in Bit of the ring buffer used for
                                              serial output. */
