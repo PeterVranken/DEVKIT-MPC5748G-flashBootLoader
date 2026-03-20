@@ -327,7 +327,7 @@ ivr1_z2HasNoDCache:
        problem to the next safety catch level: A watchdog will bring the system into the safe
        state. Not recognizing the problem means opening a door to let the SW do unsafe
        things.
-         The way we recognize the double exception is looking at the address at which the MC
+         The way we recognize the double exception is looking at the address, at which the MC
        exception preempted. If it is the beginning of another IVOR exception then we decide
        for double exception. Since the preempted exception is closer to the root cause of the
        fault we resume the execution of that exception.
