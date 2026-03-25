@@ -182,15 +182,16 @@ sup_bafData:
 
 The two 32 Bit words at `sup_bafData + 0x08` and `sup_bafData + 0x0C` are
 new; all others need to remain unchanged. In the original boot header, the
-two words were simply filled by 0xFF bytes. Now, they contain the
+two words were simply filled with 0xFF bytes. Now, they contain the
 application specific part of the FBL configuration.
 
-The word at offset 0x08 is interpreted as as the time designation between
+The word at offset 0x08 is interpreted as the time designation between
 reset and launch of the flashed application. During this time span, the
 FBL listens on the CAN bus for potential CCP CONNECT commands. If such a
 command is received then the FBL doesn't launch the application but waits
-for more CCP communication. It won't end unless commanded by CCP or until
-next reset. The specified time needs to be in the range 0..60s.
+for more CCP communication. It won't terminate unless commanded by CCP or
+until next reset. The specified time needs to be in the range 0..60000
+(Milliseconds).
 
 The word at offset 0x0C needs to point to the location of the magic word.
 
