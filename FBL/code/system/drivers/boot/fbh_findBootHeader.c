@@ -112,8 +112,8 @@ uint32_t fbh_findApplication(uint32_t * const pTiWaitForCcpInMs)
        of memory.
          FD8000: One of the locations supported by the BAF. If an application places its
        boot header here then its compiled binary would work well with or without the FBL
-       being flashed, too. The downside is, that the boot header now splits the total
-       available flash ROM in two chunks.
+       being flashed. The downside is, that the boot header now splits the total available
+       flash ROM in two separate areas.
          See RM48 57.1.3, Table 57-3, p.2840, for the BAF supported boot header locations,
        and Table 57-4 for the binary built-up of the header.
          The two words of the original MPC5748G boot header definition, "Configuration

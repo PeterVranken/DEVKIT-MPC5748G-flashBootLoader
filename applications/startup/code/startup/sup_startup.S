@@ -87,8 +87,9 @@
 #define ENABLE_CPU1     0x0008
 #define ENABLE_CPU2     0x0001
 
-/** An arbitrary magic value, which is expected at the end of the flashed application as
-    kind of minimal prove for seeing a valid application in flash ROM. */
+/** A magic value, which is expected at the end of the flashed application as kind of
+    minimal prove for seeing a valid application in flash ROM. The value is arbitrary but
+    needs to match the one used in the source code of the FBL. */
 #define MAGIC_AT_APPLICATION_END    0X1F54DEB9
 
 

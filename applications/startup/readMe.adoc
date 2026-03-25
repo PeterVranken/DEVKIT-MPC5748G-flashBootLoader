@@ -31,7 +31,7 @@ Bd, 8 Bit, no parity bit, 1 stop bit.
 The sample permanently prints some progress information but it takes no
 user input and can't be influenced in what it does.
 
-== Origin and modifications
+== Origin and modifications made for use with FBL
 
 The sample is a copy from
 https://github.com/PeterVranken/DEVKIT-MPC5748G/tree/master/samples/startup[GitHub,
@@ -40,7 +40,168 @@ modification made is the boot header. The boot header has been moved to
 another address - an address, which is recognized and supported by the FBL
 - and it has two additional words of information.
 
-TODOC: Details, address before and now, where have the modifications been made.
+The original sample "startup" would not work with the FBL. The FBL itself
+is an application, which sits in the flash memories and which is started
+by the device's Boot Assist Manager (BAM) out of reset. Therefore, it
+occupies a portion of flash ROM and it requires sovereignty of the boot
+header location(s). An application cooperating with the FBL, will
+typically:
+
+. Have a restricted, limited address space configured in the linker
+script, which can be safely erased and re-programmed by the FBL without
+endangering itself.
+. Be compiled for another start address as usual.
+. Will have a modified boot header at a different location. (The FBL
+expects a bit of additional configuration data in the boot header.)
+
+We recommend using a tool like `WinMerge` to compare the files of the
+https://github.com/PeterVranken/DEVKIT-MPC5748G/tree/master/samples/startup[original
+project^] with those of the
+https://github.com/PeterVranken/DEVKIT-MPC5748G-flashBootLoader/tree/main/applications/startup[modified
+project^] to find the few required code modifications. 
+
+
+=== File `makefile\linkerControlFile.ld`
+
+This is the memory partitioning of the original application:
+
+    MEMORY
+    {
+        memBoot(rx):  org = 0x00f90000, len = 0x18
+        memFlash(rx): org = 0x00f90000 + LENGTH(memBoot), len = 0x01580000 - ORIGIN(memFlash)
+        memData(rwx): org = 0x40000000, len = 3*256K
+    }
+
+The application uses the ROM from address 0xF90000 onwards. However, the
+address space from 0xF90000 till 0xFC8000 is now allocated to the FBL and
+must not be used. The new memory partitioning becomes:
+
+    MEMORY
+    {
+        memBoot(rx):  org = 0x00FC8000, len = 0x1C
+        memFlash(rx): org = 0x00FC8000 + LENGTH(memBoot), len = 0x01580000 - ORIGIN(memFlash)
+        memData(rwx): org = 0x40000000, len = 3*256K
+    }
+
+A second file modification relates to the "application magic". The FBL
+implements only a minimal validation of the memory contents, whether or
+not it contains a flashed, valid application. The principal check is the
+check of the boot header at memory location 0cFC8000. The FBL will launch
+the application only if the boot header meets all expectations (see
+below). One 32 Bit word of the boot header is the pointer to the flash ROM
+address, where the magic word is found. This word belongs to the
+application code and it is typically located at the end of the application
+code. This is the use case: 
+
+Re-programming the application starts with erasing the memories.
+Afterwards, there won't be a magic word. If flashing the application fails
+then it is almost certain that there still won't be such a word in the
+memories. (As flashing is normally done in order of increasing memory
+addresses.) Therefore, testing the magic word shows with high accuracy
+whether a valid application had been loaded into the flash ROM.
+
+This linker script construct ensures that the magic is appended to the
+normal application code:
+
+    .dummyROM : ALIGN(4)
+    {
+        KEEP(*(.bafMagicApplicationPresent))
+        . = ALIGN(32);
+        ld_romEnd = ABSOLUTE(.);
+    } >memFlash
+
+Section `dummyROM` is located as last very last ROM section, at line 355,
+before RAM section `.dummyRAM`.
+
+Please note, the FBL allows placing the boot header not only at 0xFC8000
+but also at 0xFD8000. This address is not so nice as it is in the middle
+of the available flash ROM address range but it has the advantage that it
+is a BAM recognized location of the header, too. An application, which
+uses this address would be runnable with and without FBL. It would start
+out of reset on an otherwise blank DEVKIT-MPC5748G and -- if the FBL is
+flashed in the DEVKIT-MPC5748G -- it would be recognized and launched by
+the FBL after reset.
+
+More details can be found in file
+`FBL/code/system/drivers/boot/fbh_findBootHeader.c`.
+
+=== File `startup\code\startup\sup_startup.S`
+
+In the first section of file `sup_startup.S`, we find the definition of
+the "magic" value. A word holding this value is expected at the end of the
+flashed application as kind of minimal prove for seeing a valid
+application in flash ROM. The value is arbitrary but needs to match the
+one used in the source code of the FBL.
+
+    #define MAGIC_AT_APPLICATION_END    0X1F54DEB9
+
+The definition of the value is followed by a few lines of assembly code
+for placing the word holding that value. This code is the only use of
+linker section `bafMagicApplicationPresent`. In the previous section, we
+saw how the linker script is used to ensure that this section -- and so
+the word -- will be located behind the application code, at the end of the
+used flash ROM address range.
+
+        .section    .bafMagicApplicationPresent, "a"
+        .global     bafMagicApplicationPresent
+    sup_bafMagicApplicationPresent:
+        .dc.l       MAGIC_AT_APPLICATION_END
+
+The last modification needed, is an extended boot header:
+
+[source,S]
+---------------------------
+    .section    .bafData, "a"
+    .global     sup_bafData
+sup_bafData:
+    /* MCU specific magic word at beginning of boot sector. */
+    .dc.w       RCHW_VALUE
+    .dc.w       ENABLE_CPU0 | ENABLE_CPU1 | ENABLE_CPU2
+
+    /* Reset vector for core 2. */
+    .org        sup_bafData + 0x04, 0xff
+    .dc.l       sup_startUp
+
+    /* FBL configuration: Time to wait for CCP connect attempt after
+       reset, unit ms. */
+    .org        sup_bafData + 0x08, 0xff
+    .dc.l       500
+
+    /* FBL configuration: Pointer to magic at application end. */
+    .org        sup_bafData + 0x0C, 0xff
+    .dc.l       sup_bafMagicApplicationPresent
+
+    /* Reset vector for core 0. */
+    .org        sup_bafData + 0x10, 0xff
+    .dc.l       sup_startUp
+
+    /* Reset vector for core 1. */
+    .org        sup_bafData + 0x14, 0xff
+    .dc.l       sup_startUp
+---------------------------
+
+The two 32 Bit words at `sup_bafData + 0x08` and `sup_bafData + 0x0C` are
+new; all others need to remain unchanged. In the original boot header, the
+two words were simply filled by 0xFF bytes. Now, they contain the
+application specific part of the FBL configuration.
+
+The word at offset 0x08 is interpreted as as the time designation between
+reset and launch of the flashed application. During this time span, the
+FBL listens on the CAN bus for potential CCP CONNECT commands. If such a
+command is received then the FBL doesn't launch the application but waits
+for more CCP communication. It won't end unless commanded by CCP or until
+next reset. The specified time needs to be in the range 0..60s.
+
+The word at offset 0x0C needs to point to the location of the magic word.
+
+Any invalid element invalidates the boot header and the application won't
+be launched:
+
+. A wrong value for `RCHW_VALUE`.
+. An implausible code start address.
+. An out of range time span.
+. An implausible address of the magic word.
+. (A bad magic word.)
 
 == Tools
 
@@ -95,7 +256,6 @@ Once everything is prepared, the S32 Design Studio will never be started
 other than by clicking the script `S32DS-IDE.ps1` or its equivalent on
 non-Windows hosts.
 
-TODOC: Where to get the tools, how to install them
 //See https://github.com/PeterVranken/TRK-USB-MPC5643L[project overview^] and
 //https://github.com/PeterVranken/TRK-USB-MPC5643L/wiki/Tools-and-Installation[GitHub
 //Wiki^] for more details about downloading and installing the required
@@ -106,40 +266,22 @@ TODOC: Where to get the tools, how to install them
 Compilation and linkage are makefile controlled. The compiler is GCC
 (MinGW-powerpc-eabivle-4.9.4). It is part of the S32 Design Studio
 installation and can be used independently from the Studio. The makefile
-is made generic and can be reused for production projects that want to
-make use of safe-RTOS. It supports a number of options (targets); get an
-overview by typing:
+supports a number of options (targets); get an overview by typing:
  
-    cd <projectRoot>/samples/CAN
+    cd <folderWhereGNUmakefileIsLocated>
     mingw32-make help
 
 The main makefile `GNUmakefile` has been configured for the build of
-sample "CAN". Type:
+this demo sample. Type:
 
     mingw32-make -sO build
     mingw32-make -sO build CONFIG=PRODUCTION
 
 to produce the flashable files
 `bin\ppc\default\DEBUG\DEVKIT-MPC5748G-startup.s28`, and
-`bin\ppc\default\PRODUCTION\DEVKIT-MPC5748G-startup.s28`.
-
-File `GNUmakefile` has a variable `defineList`, which is a list of options
-for the build. A major option is `LINK_IN_RAM`. If you place this option
-into the list then the same build commands link the software for execution
-in RAM. (See next section for details). With option `LINK_IN_RAM`, the same
-commands:
-
-    mingw32-make -sO build
-    mingw32-make -sO build CONFIG=PRODUCTION
-
-produce the flashable files
-`bin\ppc\default\DEBUG-RAM\DEVKIT-MPC5748G-startup.s28`, and
-`bin\ppc\default\PRODUCTION-RAM\DEVKIT-MPC5748G-startup.s28`.
-
-To get more information, type:
-
-    mingw32-make --help
-    mingw32-make help
+`bin\ppc\default\PRODUCTION\DEVKIT-MPC5748G-startup.s28`. These are the
+files, which can be handled by the FBL. You can download and program them
+or use them for a verify operation.
 
 WARNING: The makefile requires the MinGW port of the make processor. The
 Cygwin port will fail with obscure, misleading error messages. For your
@@ -149,7 +291,7 @@ aliases this (Windows) executable to the command `make`. Moreover,
 explicitly typing `mingw32-make` will generally avoid any problem.
 
 The makefile is designed to run on different host systems but has been
-tested with Windows 7 and Windows 10 only.
+tested with Windows only.
 
 === Flashing
 
