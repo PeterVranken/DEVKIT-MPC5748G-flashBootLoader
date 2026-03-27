@@ -9,10 +9,6 @@
 
 // ---- Utilities ----
 
-static void hexbyte(char *out, uint8_t b) {
-    sprintf(out, "%02X", b);
-}
-
 static uint8_t checksum_srec(uint8_t count, const uint8_t *addr_be, int addr_len,
                              const uint8_t *data, int len) {
     uint32_t sum = count;
@@ -25,9 +21,13 @@ static uint8_t checksum_srec(uint8_t count, const uint8_t *addr_be, int addr_len
 
 // S0 header: 2-byte address (usually 0), text payload, 1-byte checksum
 static void write_s0(FILE *f, const char *text) {
-    // Many tools tolerate up to ~20 chars; spec allows more, but keep it modest.
+    // The S0 "header" record contains these fields (all counted in bytes):
+    //   mname: char[20]
+    //   ver: char[2]
+    //   rev: char[2]
+    //   description: char[0-36]
     uint8_t len = (uint8_t)strlen(text);
-    if (len > 20) len = 20;
+    if (len > 60) len = 60;
 
     uint8_t count = (uint8_t)(len + 3); // addr(2) + checksum(1)
     uint8_t addr_be[2] = {0x00, 0x00};

@@ -1,0 +1,57 @@
+= Test of FBL with Random Data
+:Author:            Peter Vranken 
+:Email:             mailto:Peter_Vranken@Yahoo.de
+:toc:               left
+:xrefstyle:         short
+:numbered:
+:icons:             font
+:caution-caption:   :fire:
+:important-caption: :exclamation:
+:note-caption:      :paperclip:
+:tip-caption:       :bulb:
+:warning-caption:   :warning:
+
+The script generateRandomSrecFile, which is found in this folder,
+generates randomly filled Motorola s-record files, which can be used for
+testing of the FBL.
+
+The code has been written by Copilot. Requirements were:
+
+.Asking Copilot for support:
+[quote, https://copilot.microsoft.com/, Requesting prompt]
+----
+Hi Copilot! For testing of my FBL, I would require a script, which can
+generate s-record files. Arguments should be: 
+- Name of created file
+- Text for a single contains s0 record.
+- A list of address ranges [from, till), where from and till are
+  hexadecimal numbers. 
+Data contents should be chosen randomly.
+
+The script language could be PowerShell, Java (as a class with a main
+method) or a little plain C file.
+----
+
+== Build of the tool
+
+The code can be compiled with GNUC. Provided, GCC is found in the search
+path, then the tool can be built with:
+
+    cd <repositoryCloneDir>/generateRandomSrecFile/
+    gcc -Wall -g3 -gdwarf-2 -Og -DDEBUG -o srecgen.exe srecgen.c
+
+== Use of the tool
+
+This is the tool's usgae message:
+
+    srecgen.exe <outfile.s37> <s0_text> <from1> <to1> [<from2> <to2> ...]
+
+. First argument is the name of the created file. The extension "s37" is
+  recommended in order to comply with the Motorola convention for s-record
+  files using 4 Byte addresses.
+. Second argument is a short text, which is added to the file contents as
+  S0 record.
+. The rest of the command line is an even number of addresses. Every first
+  one and every second one form a range from..till, where till is
+  excluding. Each address is a raw hexadecimal number, without a leading $
+  or 0x. Each specified address range is filled with random bytes.

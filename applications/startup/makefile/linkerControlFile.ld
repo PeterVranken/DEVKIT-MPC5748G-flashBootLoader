@@ -32,7 +32,7 @@ MEMORY
        is marked "Small HSM Code Block". According to RM, 3.3, table 3-2, f90000 is the
        beginning of the generally usable flash ROM and it's at the same time the second
        boot sector. The FBL supports the boot header at either fc8000 or fd8000. */
-    memBoot(rx):  org = 0x00FC8000, len = 0x1C
+    memBoot(rx):  org = 0x00FC8000, len = 0x18
     memFlash(rx): org = 0x00FC8000 + LENGTH(memBoot), len = 0x01580000 - ORIGIN(memFlash)
     memData(rwx): org = 0x40000000, len = 3*256K
 }

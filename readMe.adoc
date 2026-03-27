@@ -1,0 +1,61 @@
+= Flash Boot Loader for DEVKIT-MPC5748G
+:Author:            Peter Vranken 
+:Email:             mailto:Peter_Vranken@Yahoo.de
+:toc:               left
+:xrefstyle:         short
+:numbered:
+:icons:             font
+:caution-caption:   :fire:
+:important-caption: :exclamation:
+:note-caption:      :paperclip:
+:tip-caption:       :bulb:
+:warning-caption:   :warning:
+
+This repository contains a CAN based flash boot loader (FBL) for the
+DEVKIT-MPC5748G. The board dependencies are little, so the FBL will be
+applicable in other boards using the MP5748G, too.
+
+The FBL supports CAN as only communication channel. The applied protocol
+is CCP. A suitable
+https://github.com/PeterVranken/winFlashTool/tree/main[flash tool^] is
+available in a related repository. It has been made for Windows, but it is
+a Java application and should run under Linux, too.
+
+This readme provides only an overview on the repository. There are readmes
+in the different folders, which explain the different topics in much more
+details.
+
+== Contents of the repository
+
+=== Folder `FBL`
+
+C source code and build scripts to build the FBL. Main build tool is the
+free to download and use
+https://www.nxp.com/design/design-center/software/automotive-software-and-tools/s32-design-studio-ide/s32-design-studio-for-power-architecture:S32DS-PA[NXP
+S32 Design Studio for Power Architecture^]. This tool is also used to
+flash the compiled FBL onto the DEVKIT-MPC5748G.
+
+=== Folder `applications`
+
+Applications for the DEVKIT-MPC5748G, which are intended for download and
+flashing via the FBL, require a few modifications in comparison to
+applications being flashed by the debugger and directly started by the
+Boot Assist Module (BAM) out of reset. The folder contains a few
+precompiled FBL-compatible applications, which can be used to try-out FBL
+and flash tool and one application, called "startup", with full source
+code and build scripts.
+
+The documentation of application "startup" explains in detail, what to do
+to make an existing application compatible with the FBL.
+
+=== Folder `tools`
+
+This folder contains a few tools or packages, which are required to run
+the builds.
+
+=== Folder `generateRandomSrecFile`
+
+This folder contains executable and C source code of a small, simple tool,
+which can generate S-record files with random contents. The needed address
+ranges are specified on the command line. The generated files can be used
+to evaluate and test the FBL.
