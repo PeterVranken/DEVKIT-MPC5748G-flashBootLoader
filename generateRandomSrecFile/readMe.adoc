@@ -42,7 +42,7 @@ path, then the tool can be built with:
 
 == Use of the tool
 
-This is the tool's usgae message:
+This is the tool's usage message:
 
     srecgen.exe <outfile.s37> <s0_text> <from1> <to1> [<from2> <to2> ...]
 

@@ -42,7 +42,7 @@ another address - an address, which is recognized and supported by the FBL
 
 The original sample "startup" would not work with the FBL. The FBL itself
 is an application, which sits in the flash memories and which is started
-by the device's Boot Assist Manager (BAM) out of reset. Therefore, it
+by the device's Boot Assist Flash (BAF) out of reset. Therefore, it
 occupies a portion of flash ROM and it requires sovereignty of the boot
 header location(s). An application cooperating with the FBL, will
 typically:
@@ -116,7 +116,7 @@ before RAM section `.dummyRAM`.
 Please note, the FBL allows placing the boot header not only at 0xFC8000
 but also at 0xFD8000. This address is not so nice as it is in the middle
 of the available flash ROM address range but it has the advantage that it
-is a BAM recognized location of the header, too. An application, which
+is a BAF recognized location of the header, too. An application, which
 uses this address would be runnable with and without FBL. It would start
 out of reset on an otherwise blank DEVKIT-MPC5748G and -- if the FBL is
 flashed in the DEVKIT-MPC5748G -- it would be recognized and launched by
@@ -187,7 +187,7 @@ application specific part of the FBL configuration.
 
 The word at offset 0x08 is interpreted as the time designation between
 reset and launch of the flashed application. During this time span, the
-FBL listens on the CAN bus for potential CCP CONNECT commands. If such a
+FBL listens on the CAN bus for potential CCP `CONNECT` commands. If such a
 command is received then the FBL doesn't launch the application but waits
 for more CCP communication. It won't terminate unless commanded by CCP or
 until next reset. The specified time needs to be in the range 0..60000

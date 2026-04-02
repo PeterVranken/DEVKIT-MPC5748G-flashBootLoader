@@ -76,10 +76,7 @@
  */
 
 /**
- * Start the countdown till a functional reset.\n
- *   To end up with a reset, this function should be called regularly once a Millisecond
- * until reset. A short delay is implemented such that a feedback can still be written to
- * the console.
+ * Trigger a functional (software-)reset.
  *   @param[in] bootFlag
  * A 32 Bit word, which is passed to the FBL across the demanded reset. Must be either
  * #SWR_BOOT_FLAG_START_FBL or #SWR_BOOT_FLAG_START_APP.
