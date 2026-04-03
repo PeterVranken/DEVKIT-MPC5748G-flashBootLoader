@@ -1,4 +1,4 @@
-= Flash Boot Loader for DEVKIT-MPC5748G
+= Flash Boot Loader for MPC5748G
 :Author:            Peter Vranken
 :Email:             mailto:Peter_Vranken@Yahoo.de
 :toc:               left
@@ -13,7 +13,7 @@
 
 This repository contains a CAN based flash boot loader (FBL) for the
 DEVKIT-MPC5748G. The board dependencies are little, so the FBL will be
-applicable in other boards designed around the MP5748G, too.
+applicable in other boards designed around the MPC5748G, too.
 
 The FBL supports CAN as only communication channel. The applied protocol
 is CCP, details are explained below. A suitable
@@ -24,12 +24,40 @@ a Java application and should run under Linux, too.
 == Key features
 
 - CCP protocol for authorization, erasure, download (programming) and
-  upload (read-out or verify)
-- Authorization with Ed25519 key pairs
-- 224 kB at 0xF90000 reserved for FBL
-- 5856 kB at 0xFC8000 managed by FBL and available to application code
+  upload (read-out or verify).
+- Authorization with Ed25519 key pairs.
+- 224 kB at 0xF90000 reserved for FBL.
+- 5856 kB at 0xFC8000 managed by FBL and available to application code.
 - Entry into FBL by software reset or by programmable time span to wait
   for a CCP CONNECT after reset.
+
+== Usefulness of this repository
+
+The FBL is applicable out of the box only, if:
+
+- The platform is the DEVKIT-MPC5748G.
+- The related flash tool is used.
+- Entry into the FBL for re-programming the application is desired only
+  out of reset.
+
+In all other situations, the repository can be understood only as starting
+point of your own development:
+
+- If you use another board with the MPC5748G, then you'd probably need to
+  rework the CAN driver configuration, the driver for the CAN transceiver
+  and the pin configuration for the chosen CAN device.
+- If you use another MCU from the same NXP family and if it has the C55FMC
+  flash memory then you also need to add a new specification table of
+  flash blocks and modify the addresses, where the FBL resides in memory,
+  where the application may reside and where the boot header is placed.
+  (Besides all the general migration work for another MCU, like startup
+  code, clock settings, etc.)
+- If you use another MCU from the same NXP family and if it doesn't have
+  the C55FMC flash memory then you also need to add a new flash ROM
+  driver, which supports erasure of blocks and programming of pages.
+
+The first scenario can be considered a small, simple, and quick change.
+The others represent a serious development project.
 
 == Abbreviations
 
@@ -54,7 +82,7 @@ a Java application and should run under Linux, too.
 |FBL |Flash boot loader
 |GCC |GNU compiler collection
 |GPIO |General purpose I/O
-|GNU |GNU's not unix
+|GNU |GNU's not Unix
 |GUI |Graphical user interface
 //|HW |Hardware
 |I/O |Input/output
@@ -85,7 +113,7 @@ a Java application and should run under Linux, too.
 //|TBD |To be defined
 //|TCP |Transmission Control Protocol
 |TODOC |To be documented
-|Tx |Outbound, transmission/Send related
+|Tx |Outbound, transmission/send related
 //|UDP |User datagram protocol
 //|UDS |Unified diagnostic services
 |USB |Universal serial bus
@@ -135,7 +163,7 @@ client, which is perceived as protocol error and leads to aborting of the
 connection.
 
 Next to CCP protocol state machine and flash ROM driver, is the serial I/O
-the third pilar in the code structure. The FBL writes a lot of status and
+the third pillar in the code structure. The FBL writes a lot of status and
 progress information to the COM port of the DEVKIT-MPC5748G. Moreover, it
 reads a couple of commands ("help" to begin) from the COM port and allows
 to interact with a user, who has opened a terminal session with the board.
@@ -176,7 +204,7 @@ support center.
 == Configuration of CAN bus and CAN IDs
 
 Flashing is done by CAN using two CCP. CCP requires two CAN messages the
-CRO comand message and the DTO response message. The configuration of the
+CRO command message and the DTO response message. The configuration of the
 FBL requires the CAN device to use and the two CAN IDs for CRO and DTO.
 The choice is made at compile-time by means of `#define` switches in
 file `code/system/CCP/ccp_taskCcp.h`.
@@ -189,8 +217,8 @@ https://github.com/PeterVranken/DEVKIT-MPC5748G/tree/master/samples/CAN[`CAN`^]
 for details.
 
 The FBL can basically use any CAN bus for flashing. The configuration made
-in the repoistory is the CAN bus, which is connected to the CAN
-transceiver mounted on the DEVKIT-MP5748G and you can use the FBL out of
+in the repository is the CAN bus, which is connected to the CAN
+transceiver mounted on the DEVKIT-MPC5748G and you can use the FBL out of
 the box.
 
 The configuration setting is found as macro `CCP_IDX_CAN_BUS_FOR_CCP`:
@@ -205,7 +233,7 @@ The configuration setting is found as macro `CCP_IDX_CAN_BUS_FOR_CCP`:
 `cdr_canDev_CAN_0` designates the first FlexCAN device, which is enabled
 in the CAN driver `code\system\drivers\CAN`. In the uploaded revision,
 this is `FlexCAN_0`. If you want to use another CAN device for the FBL,
-then you first need to modify the CAN driver configuration and enbale
+then you first need to modify the CAN driver configuration and enable
 and configure that device properly.
 
 The CAN IDs are set by means of `#define` switches in
@@ -244,7 +272,7 @@ by means of `#define` switch in file `code/system/CCP/ccp_taskCcp.h`:
 #define CCP_STATION_ADDR                0x1234u
 ---------------------------
 
-The default configuration is 0x1234 of 4660. This address needs to be used
+The default configuration is 0x1234 or 4660. This address needs to be used
 in the configuration of the flash tool.
 
 == Authentication key pair
@@ -283,11 +311,11 @@ chosen key pairs. Any other key pair generator for Ed25519 can of course
 be used, too.
 
 As of writing, April 2026, there is no compile-time switch in the FBL to
-disable the authentication precedure.
+disable the authentication procedure.
 
 == Supported CCP commands
 
-Only a small subset of CCP comands is required for the tasks of an FBL.
+Only a small subset of CCP commands is required for the tasks of an FBL.
 This FBL understands:
 
 // See https://docs.asciidoctor.org/asciidoc/latest/tables/build-a-basic-table/ or https://leanpub.com/awesomeasciidoctornotebook/read
@@ -305,26 +333,26 @@ This FBL understands:
 // format="csv": Cell comma separated (no leading/trailing comma)
 [[tabSupportedCCP]]
 .Supported CCP commands
-[options="header",cols="^10e,^10e,80e", width="80%"]
+[options="header",cols="^25e,^10e,65e", width="90%"]
 |=======
 |CCP |Code |Description
 
 |CONNECT |0x01 | Establish a CCP connection with a particular device. The
-station address is the argument of the comand. Pass 0x1234 to address to
+station address is the argument of the command. Pass 0x1234 to address to
 our FBL.
 
 |SET_MTA |0x02 | The target address for erasure, up- and download is set.
 Argument is the address. CCP specifies two addresses, which can be set.
-The FBL supports only 'MTA0'. Any attempt to set 'MTA1' or to set 'MTA0'
+The FBL supports only `MTA0`. Any attempt to set `MTA1` or to set `MTA0`
 to an address not in the managed flash ROM (exception see below) leads to
-a negative reponse.
+a negative response.
 
 |UPLOAD |0x04 | Argument is a count in the range 1..5. This
-number of bytes is read at memory address 'MTA0' and returned in the
+number of bytes is read at memory address `MTA0` and returned in the
 response. MTA is incremented by the requested number of bytes.
 
 |DOWNLOAD |0x03 | Argument is a number of data bytes in the range 1..5.
-These bytes are written to the RAM address 'MTA0'. The only use of this
+These bytes are written to the RAM address `MTA0`. The only use of this
 command is downloading the digital signature for authentication. The MTA
 is incremented by the number of bytes.
 
@@ -333,18 +361,18 @@ of data bytes as an argument, does this command download exactly six data
 bytes.
 
 |CLEAR_MEMORY |0x10 | Erase flash ROM. Argument is the number of bytes to
-erase, starting from flash ROM address 'MTA0'. Effectively, the command can
+erase, starting from flash ROM address `MTA0`. Effectively, the command can
 erase more data bytes; first and last address are rounded down and up,
 respectively, to the next flash block start address. (Only complete flash
 blocks can be erased.)
 
 This command is different in that it can take very long to respond. The
-reponse is sent only after erasure has completed. If the entire managed
+response is sent only after erasure has completed. If the entire managed
 flash ROM is erased then this takes about 15 s. The CCP client needs to
 have an according timeout, when submitting this command.
 
 |PROGRAM |0x18 | Argument is a number of data bytes in the range 1..5.
-These bytes are programmed at flash ROM address 'MTA0'. The MTA
+These bytes are programmed at flash ROM address `MTA0`. The MTA
 is incremented by the number of bytes.
 
 |PROGRAM_6 |0x22 | Nearly same as PROGRAM. While PROGRAM has the count of
@@ -353,7 +381,7 @@ bytes.
 
 |DIAG_SERVICE |0x20 | This command supports custom functionality of a CCP
 server. Argument is the index of the function and up to four argument
-bytes. The response contains the size of the function result in Byte. 'MTA0'
+bytes. The response contains the size of the function result in Byte. `MTA0`
 is set to the upload address for the function result. The FBL supports
 these custom functions:
 
@@ -393,7 +421,7 @@ been completed before. The authentication is valid as long as the session
 is alive, i.e., until an explicit `DISCONNECT` or until an error occurs.
 - `CLEAR_MEMORY`, `UPLOAD`, `DOWNLOAD`, `DOWNLOAD_6`, `PROGRAM` and
 `PROGRAM_6` do all depend on `MTA0`, normally set by an initial `SET_MTA`.
-- Erasure is always done for entire flash blocks and it is long lasting
+- Erasure is always done for entire flash blocks and it is a long lasting
 operation (up to 15 s). It makes little sense to erase small chunks of
 data or to alternatingly erase and program data if not carefully
 considering the flash block boundaries. Otherwise a later `CLEAR_MEMORY`
@@ -425,7 +453,7 @@ sections.
 . Two times `UPLOAD` to fetch the function result, the seed value and the
 download address for the computed digital signature.
 . Several `DOWNLOAD_6` and or `DOWNLOAD` commands to provide the 64 Byte
-of the computed digital signature to the FBL.
+of the computed digital signature of the seed to the FBL.
 . `DIAG_SERVICE`, function 1, request version information.
 . Several `UPLOAD` commands to fetch the function result, the version
 information. (Natural, printable text; no specific data format is
@@ -442,7 +470,7 @@ e.g. after flashing new data.
 . Two times `UPLOAD` to fetch the function result, the seed value and the
 download address for the computed digital signature.
 . Several `DOWNLOAD_6` and or `DOWNLOAD` commands to provide the 64 Byte
-of the computed digital signature to the FBL.
+of the computed digital signature of the seed to the FBL.
 . `SET_MTA`, argument is the first flash ROM address to read.
 . Several `UPLOAD` commands to fetch all wanted bytes from the ECU.
 . `DISCONNECT`.
@@ -457,11 +485,11 @@ e.g. after flashing new data.
 . Two times `UPLOAD` to fetch the function result, the seed value and the
 download address for the computed digital signature.
 . Several `DOWNLOAD_6` and or `DOWNLOAD` commands to provide the 64 Byte
-of the computed digital signature to the FBL.
+of the computed digital signature of the seed to the FBL.
 . `SET_MTA`, argument is the first flash ROM address to program.
 . `CLEAR_MEMORY`, argument is the difference between last (exclusive) and
 first flash ROM address to program.
-. Several `PROGAM_6` and or `PROGRAM` commands to write all wanted bytes
+. Several `PROGRAM_6` and or `PROGRAM` commands to write all wanted bytes
 into the blank flash ROM.
 . `SET_MTA`, argument is the first programmed flash ROM address.
 . Several `UPLOAD` commands to fetch all just programmed bytes from the
@@ -472,7 +500,7 @@ flashed application.
 
 == Error responses
 
-Any CCP command ends with a CAN response message. The most importent
+Any CCP command ends with a CAN response message. The most important
 element of the response is the Command Return Code - normally the success
 message 0. All non-zero return codes designate a kind of error. No matter
 which error, the flash procedure has failed whenever such a non-zero code
@@ -498,7 +526,7 @@ to the characteristics of the flash ROM.
 
 Asynchronous function execution mainly relates to programming: When the FBL
 receives a `PROGRAM` or `PROGRAM_6` command, it will first buffer the data
-and only later do the actual flash progamming.
+and only later do the actual flash programming.
 
 == Data buffering during programming
 
@@ -506,8 +534,8 @@ The CCP client must send the data to program in order of raising memory
 addresses. The flash ROM is organized in pages of 128 Byte (called
 "quad-pages" for the MPC5748G) and only entire pages can be programmed.
 Once a page has been programmed, it is not possible to program it again,
-regardless wether the same or other bytes of the page are programmed.
-Before a page can be programmed again, the entire flash block containg the
+regardless whether the same or other bytes of the page are programmed.
+Before a page can be programmed again, the entire flash block containing the
 page needs to be erased again -- and this will erase many other pages at
 the same time. (For the MPC5748G, a flash block consists of 2048 pages.)
 
@@ -522,10 +550,10 @@ A back and force between programmed addresses is not impossible but would
 require deep understanding of the buffering strategy and it would require
 to strictly consider the quad-page boundaries.
 
-== Command line
+== Console I/O
 
 During development of either the FBL itself or a compatible application of
-the DEVKIT-MPC57548G, it is recommended to make use of the console
+the DEVKIT-MPC5748G, it is recommended to make use of the console
 interface of the FBL.
 
 The USB connection between DEVKIT-MPC5748G and the PC used for development
@@ -542,7 +570,7 @@ The information printed to the console is useful to understand, what the
 FBL does do. You can see if a CCP client tries to connect, if the
 connection is established, if and why it is terminated and so on.
 Moreover, the reset behavior with or without launching an application is
-protocolled.
+protocoled.
 
 There are a few possibilities to interact with the FBL, too, which may be
 useful to understand the FBL and to support development. Type `help` in
@@ -553,11 +581,11 @@ your terminal application to see.
 
 The FBL knows three different reset behaviors:
 
-1. The uncommanded reset. Most of the time a power-on reset of the board.
-In this case, the FBL checks the memories for a flashed, valid aplication.
+1. The undecided reset. Most of the time a power-on reset of the board.
+In this case, the FBL checks the memories for a flashed, valid application.
 If it finds a valid boot header then this header contains a time
 designation. The FBL starts entirely up, opens the CAN device and listens
-for potential CCP `CONNECT` commads at its station address. A CCP client
+for potential CCP `CONNECT` commands at its station address. A CCP client
 has the opportunity to send such a command and to begin some CCP
 communication, e.g., one of those typical command sequences explained
 <<secCcpCmdSeqs,above>>.
@@ -568,10 +596,10 @@ the maximum possible value is one Minute. If this time elapses without
 receiving a valid CCP `CONNECT` then the FBL launches the flashed
 application. It uses reset type 2 to do so.
 +
-Listing for CCP `COONECT` is an option only. The time designation can be
+Listing for CCP `CONNECT` is an option only. The time designation can be
 zero. In this case, reset 1 behaves like reset 2 and the startup time
 for a flashed, valid application is significantly shorter; it is
-nearly idential to the use of the application without FBL. Please note
+nearly identical to the use of the application without FBL. Please note
 that the application needs to support reset 3 in this case, otherwise,
 the FBL would become useless.
 +
@@ -579,9 +607,9 @@ If the FBL doesn't find a valid boot header then it behaves as if the time
 designation were infinite; it listens forever for CCP `CONNECT` commands.
 
 2. The reset to launch the application. This is a SW reset, normally
-triggered by the FBL itself, on demand of a conencted CCP client.
+triggered by the FBL itself, on demand of a connected CCP client.
 +
-In this case, the FBL checks the memories for a flashed, valid aplication.
+In this case, the FBL checks the memories for a flashed, valid application.
 If it finds a valid boot header then this header contains the start
 address of the application. The FBL launches the application by direct
 jump to that address. This is possible because at this time the FBL has
@@ -611,10 +639,10 @@ Most of the time, during normal use of a DEVKIT-MPC5748G application,
 reset 1 is used. The board is powered, the application launched, the user
 experiences expected behavior of board and application.
 
-Reset 2 is normally used only at the end of a successful CCP
-communication sequence, which was initiated to flash an update of the
-application onto the board: The new application is started with needing to
-re-power the board.
+Reset 2 is normally used only at the end of a successful CCP communication
+sequence, which was initiated to flash an update of the application onto
+the board: The new application is started without the need for re-powering
+the board.
 
 Reset 3 allows convenient firmware update of the board. In particular if
 the application supports CAN communication and if the trigger for this
@@ -925,7 +953,7 @@ and start the debugger with a last click on button "Debug".
 == Known issues
 
 . The debugger in the IDE S32 Design Studio unconditionally erases all
-flash ROM if an application is programmed in the DEVKIT-5748G. FBL and
+flash ROM if some code is programmed in the DEVKIT-MPC5748G. FBL and
 application use different flash blocks, without an overlap. But
 regardless, if the FBL is flashed then a flashed application would be
 erased and vice versa. Therefore, even during application development, it
@@ -934,18 +962,18 @@ would be deleted and the application wouldn't be launched out of reset.
 +
 There are two workarounds. The first one is using the alternative boot
 header location for the application. If the boot header it placed at
-address 0x00FD8000 then it is recognized by FBL and BAM. If the FBL is
-erased then the application is still launched directly by the BAM. The
+address 0x00FD8000 then it is recognized by FBL and BAF. If the FBL is
+erased then the application is still launched directly by the BAF. The
 downside is that the boot header now is in the middle of the usable flash
 ROM space.
 +
 The second option is to have a (preprocessor) switch in the application to
 toggle between different bot headers. On build configuration supports the
-FBL, the other one the BAM without the FBL.
+FBL, the other one the BAF without the FBL.
 +
 In either case, at the end of development, when making the aimed product,
 one needs to first flash the FBL and then use the FBL with flash tool and
-CAN communication to progam the application.
+CAN communication to program the application.
 +
 Or set up a build process, which combines FBL and application into a
 single image, which can be flashed at once.
