@@ -27,13 +27,14 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include "bsw_basicSoftware.h"
+#include "cdr_canDriverAPI.h"
 
 /*
  * Defines
  */
 
 /** The CAN bus by zero based index, which should be used for CCP communication. */
-#define CCP_IDX_CAN_BUS_FOR_CCP         0u
+#define CCP_IDX_CAN_BUS_FOR_CCP         cdr_canDev_CAN_0
     
 /** The CAN ID of the CCP Rx command message, aka CRO message. */
 #define CCP_CAN_ID_CCP_CRO_MSG          0x600u

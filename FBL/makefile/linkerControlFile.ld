@@ -30,7 +30,7 @@ ld_stackSizeOSCore0 = 8k;
 ld_stackSizeOSCore1 = 4k;
 ld_stackSizeOSCore2 = 4k;
 
-ld_stackSizeP1Core0 = 2k;
+ld_stackSizeP1Core0 = 8k;
 ld_stackSizeP1Core1 = 2k;
 ld_stackSizeP1Core2 = 2k;
 

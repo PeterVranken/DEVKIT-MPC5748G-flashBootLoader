@@ -63,11 +63,11 @@ srcDirList := code/ ../tools/comFramework/canInterface/code/
 # Exclusion list: Edit the list of excluded files. A blank separated list of C or assembler
 # source files is expected (all file designations with relative path), which are excluded
 # from build.
-cFileListExcl := code/system/drivers/flashROM/flash_c55_driver.c
+cFileListExcl :=
 
 # Additional include directories (besides the source directories and common, project
 # independent paths).
-incDirList := code/application/ code/application/Z4A/
+incDirList :=
 
 # A blank separated list of C defines for compilation, with or without value.
 #   There are some macros with predefined meaning for the build process. They impact the

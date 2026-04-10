@@ -75,7 +75,7 @@ endif
 
 # The name of the executable file. This is the ultimate build product in the tree of
 # dependcies. It is requested from outside this makefile fragment through this name.
-projectExe := $(target).s19
+projectExe := $(target).s28
 
 # Function isTargetArchitectureZ4
 #   Decide whether a source file has to be compiled for the Z4 or the Z2 architecture. The
@@ -301,9 +301,9 @@ $(targetDir)$(target).elf: $(if $(patchWindowsBug),$(targetDir)obj/listOfObjFile
 	$(gcc) $(lFlags) -o $@ $(if $(patchWindowsBug),@$<,$(objFileList)) -lm
     
 # Create hex file from linker output.
-$(targetDir)$(target).s19: $(targetDir)$(target).elf
+$(targetDir)$(target).s28: $(targetDir)$(target).elf
 	$(objcopy) -O ihex $< $(patsubst %.elf,%.hex,$<)
-	$(objcopy) -O srec $< $(patsubst %.elf,%.s19,$<)
+	$(objcopy) -O srec $< $(patsubst %.elf,%.s28,$<)
 
 # Delete all dependency files ignoring (-) the return code from Windows because of non
 # existing files.

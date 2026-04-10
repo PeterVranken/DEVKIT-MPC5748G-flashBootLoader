@@ -470,7 +470,7 @@ int /* _Noreturn */ main(int noArgs ATTRIB_DBG_ONLY, const uint32_t argAry[3])
         initOk = false;
         assert(false);
     }
-
+    
     /* Initialize the complete flash driver, including the sub-ordinated modules eap and
        dib. */
     rom_osInitFlashRomDriver();
@@ -655,13 +655,29 @@ int /* _Noreturn */ main(int noArgs ATTRIB_DBG_ONLY, const uint32_t argAry[3])
 
     /* The code down here becomes the idle task of the RTOS. We enter an infinite loop,
        where some background code can be placed. */
-    if(!isAppLoaded)
-        iprintf("No valid application found in flash ROM.\r\n");
 
     iprintf( "main: Got boot flag 0x%08lX, DES: 0x%08lX, FES: 0x%08lX\r\n"
            , bootFlag
            , MC_RGM_DES, MC_RGM_FES
            );
+    if(isAppLoaded)
+    {
+        if(runFblUnlimited)
+            iprintf("FBL will wait for CCP connect without time limitation.\r\n");
+        else
+            iprintf("FBL will wait for CCP connect for %lu ms.\r\n", tiWaitForCcpInMs);
+    }
+    else
+    {
+        iprintf("No valid application found in flash ROM. FBL will wait for CCP"
+                " connect without time limitation.\r\n"
+               );
+    }
+
+    if(initOk)
+    {
+    }
+
     while(true)
     {
         /* Regularly re-calculate the current stack reserve, i.e., the number of not yet
