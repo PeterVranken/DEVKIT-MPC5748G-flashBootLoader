@@ -40,7 +40,7 @@ flash the compiled FBL onto the DEVKIT-MPC5748G.
 Applications for the DEVKIT-MPC5748G, which are intended for download and
 flashing via the FBL, require a few modifications in comparison to
 applications being flashed by the debugger and directly started by the
-Boot Assist Module (BAM) out of reset. The folder contains a few
+Boot Assist Flash (BAF) out of reset. The folder contains a few
 precompiled FBL-compatible applications, which can be used to try-out FBL
 and flash tool and one application, called "startup", with full source
 code and build scripts.

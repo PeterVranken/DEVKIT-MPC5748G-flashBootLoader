@@ -150,7 +150,7 @@ The FBL supports only a subset of all CCP commands -- those which are
 required for flashing an application (see below). The principal CCP
 commands are erasing flash memory blocks and downloading data bytes for
 programming. If the client uses unsupported CCP commands then the FBL will
-reject them and close the communication channel.
+reject them and terminate the session.
 
 Many of the triggered actions are activities of the flash ROM driver,
 e.g., erasing a flash block or programming a flash ROM page. The flash ROM
@@ -159,8 +159,8 @@ machine is not only triggered by CAN Rx events, but it has timer events
 available, too, which allow it to regularly check for the progress of the
 concurrent flash ROM driver or to decide on timeout and failure if it is
 not responsive. It also checks for potential misbehavior of the CCP
-client, which is perceived as protocol error and leads to aborting of the
-connection.
+client, which is perceived as protocol error and leads to termination of
+the session.
 
 Next to CCP protocol state machine and flash ROM driver, is the serial I/O
 the third pillar in the code structure. The FBL writes a lot of status and
@@ -168,7 +168,7 @@ progress information to the COM port of the DEVKIT-MPC5748G. Moreover, it
 reads a couple of commands ("help" to begin) from the COM port and allows
 to interact with a user, who has opened a terminal session with the board.
 This option strongly supports all development work in the context of the
-FBL - be it maintenance work on the FBL itself or development of an
+FBL -- be it maintenance work on the FBL itself or development of an
 application made or modified for use with the FBL. Beyond development, in
 the final product, the serial I/O has no relevance any more.
 
@@ -203,11 +203,11 @@ support center.
 
 == Configuration of CAN bus and CAN IDs
 
-Flashing is done by CAN using two CCP. CCP requires two CAN messages the
-CRO command message and the DTO response message. The configuration of the
-FBL requires the CAN device to use and the two CAN IDs for CRO and DTO.
-The choice is made at compile-time by means of `#define` switches in
-file `code/system/CCP/ccp_taskCcp.h`.
+Flashing is done by CAN using the CCP protocol. CCP requires two CAN
+messages, the CRO command message and the DTO response message. The
+FBL requires the configuration of the CAN device to use and the two CAN
+IDs for CRO and DTO. The choice is made at compile-time by means of
+`#define` switches in file `code/system/CCP/ccp_taskCcp.h`.
 
 Other CAN related configuration settings, like Baud rate are not FBL
 specific. They are configured in the CAN driver configuration. See file
