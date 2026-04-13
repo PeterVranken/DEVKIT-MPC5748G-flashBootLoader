@@ -12,7 +12,7 @@
 :warning-caption:   :warning:
 
 The script generateRandomSrecFile, which is found in this folder,
-generates randomly filled Motorola s-record files, which can be used for
+generates randomly filled Motorola S-record files, which can be used for
 testing of the FBL.
 
 The code has been written by Copilot. Requirements were:
@@ -21,7 +21,7 @@ The code has been written by Copilot. Requirements were:
 [quote, https://copilot.microsoft.com/, Requesting prompt]
 ----
 Hi Copilot! For testing of my FBL, I would require a script, which can
-generate s-record files. Arguments should be: 
+generate S-record files. Arguments should be: 
 - Name of created file
 - Text for a single contains s0 record.
 - A list of address ranges [from, till), where from and till are
@@ -47,7 +47,7 @@ This is the tool's usage message:
     srecgen.exe <outfile.s37> <s0_text> <from1> <to1> [<from2> <to2> ...]
 
 . First argument is the name of the created file. The extension "s37" is
-  recommended in order to comply with the Motorola convention for s-record
+  recommended in order to comply with the Motorola convention for S-record
   files using 4 Byte addresses.
 . Second argument is a short text, which is added to the file contents as
   S0 record.
