@@ -961,14 +961,14 @@ is not possible to flash the application with the debugger -- the FBL
 would be deleted and the application wouldn't be launched out of reset.
 +
 There are two workarounds. The first one is using the alternative boot
-header location for the application. If the boot header it placed at
+header location for the application. If the boot header is placed at
 address 0x00FD8000 then it is recognized by FBL and BAF. If the FBL is
 erased then the application is still launched directly by the BAF. The
 downside is that the boot header now is in the middle of the usable flash
 ROM space.
 +
 The second option is to have a (preprocessor) switch in the application to
-toggle between different bot headers. On build configuration supports the
+toggle between different boot headers. One build configuration supports the
 FBL, the other one the BAF without the FBL.
 +
 In either case, at the end of development, when making the aimed product,
