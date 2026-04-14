@@ -118,7 +118,7 @@
       @remark The permitted range of values depends on the reservation of space made
     in the linker control file. The macro here needs to be maintained in sync with the
     symbol ld_noBitsDmaRingBuffer, that is maintained in the linker file. */
-#define SERIAL_OUTPUT_RING_BUFFER_SIZE_PWR_OF_TWO   10
+#define SERIAL_OUTPUT_RING_BUFFER_SIZE_PWR_OF_TWO   12
 
 /** The size of the ring buffer for serial input as number of bytes. The maximum capacity
     is one Byte less than the size. For this buffer, there's no penalty in not using a

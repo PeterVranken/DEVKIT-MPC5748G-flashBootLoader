@@ -65,8 +65,11 @@
     /* The end of the stack would normally be 8 Byte aligned. We extend the alignment
        to already fit the constraints of the next section; this way the required fill
        bytes contribute to our stack instead of being wasted. */
-    ld_noBitsDmaRingBuffer = ABSOLUTE(10);/* The size in Bit of the ring buffer used for
-                                             serial output. */
+    ld_noBitsDmaRingBuffer = ABSOLUTE(12);/* The size in Bit of the ring buffer used for
+                                             serial output. Note, macro
+                                             SERIAL_OUTPUT_RING_BUFFER_SIZE_PWR_OF_TWO in
+                                             sio_serialIO.c needs to be maintained in snyc
+                                             with this setting. */
     . = ALIGN(1 << ld_noBitsDmaRingBuffer);
 
     ld_stackEndOSCore0 = ABSOLUTE(.); /* Stack end behind alignment operation. */
