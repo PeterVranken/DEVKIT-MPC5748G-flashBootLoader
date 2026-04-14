@@ -1,4 +1,4 @@
-= Flash Boot Loader for MPC5748G
+= Flash Bootloader for MPC5748G
 :Author:            Peter Vranken
 :Email:             mailto:Peter_Vranken@Yahoo.de
 :toc:               left
@@ -11,7 +11,7 @@
 :tip-caption:       :bulb:
 :warning-caption:   :warning:
 
-This repository contains a CAN based flash boot loader (FBL) for the
+This repository contains a CAN based flash bootloader (FBL) for the
 DEVKIT-MPC5748G. The board dependencies are little, so the FBL will be
 applicable in other boards designed around the MPC5748G, too.
 
@@ -77,9 +77,9 @@ The others represent a serious development project.
 |COM |Communications port
 //|CPU |Central processing unit
 |CRO |Command receive object
-|DTO |Data Transmission Object
+|DTO |Data transmission object
 //|FD |Flexible data-rate
-|FBL |Flash boot loader
+|FBL |Flash bootloader
 |GCC |GNU compiler collection
 |GPIO |General purpose I/O
 |GNU |GNU's not Unix

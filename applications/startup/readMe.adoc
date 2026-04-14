@@ -1,4 +1,4 @@
-= Sample application for Flash Boot Loader for DEVKIT-MPC5748G
+= Sample application for Flash Bootloader for DEVKIT-MPC5748G
 :Author:            Peter Vranken 
 :Email:             mailto:Peter_Vranken@Yahoo.de
 :toc:               left
@@ -16,7 +16,7 @@
 This DEVKIT-MPC5748G sample implements a most simple demo application for
 showing:
 
-. How to use the flash boot loader (FBL) for the DEVKIT-MPC5748G.
+. How to use the flash bootloader (FBL) for the DEVKIT-MPC5748G.
 . How to prepare an application to become compatible with the
 requirements of the FBL.
 
@@ -204,6 +204,20 @@ be launched:
 . An implausible address of the magic word.
 . (A bad magic word.)
 
+== How to flash this application
+
+This application is flashed with the FBL only. First, you require a
+DEVKIT-MPC5748G with flashed FBL. Secondary, you need a compatible flash
+tool, which can communicate with the bootloader and download the binary
+program data from the Windows build machine to the DEVKIT-MPC5748G. A
+compatible https://github.com/PeterVranken/winFlashTool/tree/main[flash
+tool^] can found in a related repository.
+
+The readme of the flash tool has a
+https://github.com/PeterVranken/winFlashTool/tree/main?tab=readme-ov-file#connection-test-with-devkit-mpc5748g[section^],
+which explains the usage of the tool. There, this FBL sample application
+is used as example, so you can easily find out what to do.
+
 == Tools
 
 === Environment
@@ -293,7 +307,3 @@ explicitly typing `mingw32-make` will generally avoid any problem.
 
 The makefile is designed to run on different host systems but has been
 tested with Windows only.
-
-=== Flashing
-
-TODOC: How to use flash tool and FBL
