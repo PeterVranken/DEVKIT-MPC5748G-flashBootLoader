@@ -103,8 +103,8 @@
 #define CCP_TI_MAX_WAIT_FLASH_DRV_BUSY_IN_MS        500u
 
 /** The maximum wait time for completion of an erase command in the flash ROM driver. This
-    timeout should be in the magnitude of 10s. */
-#define CCP_TI_MAX_WAIT_FLASH_DRV_ERASE_IN_MS       25000u
+    timeout should be in the magnitude of 30s. */
+#define CCP_TI_MAX_WAIT_FLASH_DRV_ERASE_IN_MS       40000u
 
 /** The session timeout. The session is silently closed, if the client didn't send any CRO
     command this long. */

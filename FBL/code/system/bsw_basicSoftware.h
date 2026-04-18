@@ -32,7 +32,7 @@
  */
 
 /** Software version FBL. */
-#define BSW_VERSION "0.9.1"
+#define BSW_VERSION "0.9.2"
 
 /** The MCU core, which most of the BSW is executed on. The I/O drivers are executed on
     this core and many of the APIs, which they offer, are only available to code running on

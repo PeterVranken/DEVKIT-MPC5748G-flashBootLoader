@@ -629,6 +629,36 @@ int32_t bsw_taskUser100ms(uint32_t PID ATTRIB_DBG_ONLY, uint32_t taskParam ATTRI
 {
     assert(PID == bsw_pidUser);
 
+    /* The FBL uses a characteristics pattern to flash the LEDs on the board. This makes it
+       easy to distinguish between the two main modes of the board: Being in FBL or running
+       the flashed application. */
+    const static enum lbd_led_t RODATA(ledAry)[LBD_NO_ENABLED_LEDS] =
+    {
+        lbd_led_0_DS11,
+        lbd_led_1_DS10,
+        lbd_led_2_DS9, 
+        lbd_led_3_DS8, 
+        lbd_led_4_DS7, 
+        lbd_led_5_DS6, 
+        lbd_led_6_DS5, 
+        lbd_led_7_DS4, 
+    };
+    static struct {
+        uint8_t idxActiveLed:4;
+        int8_t dir:2;
+    } ctrl_ SECTION(.sdata.P1.ctrl_) = {
+       .idxActiveLed = 1u,
+       .dir = -1,
+    };
+    
+    lbd_setLED(ledAry[ctrl_.idxActiveLed], /*isOn*/ false);
+    
+    if((unsigned)((int)ctrl_.idxActiveLed + ctrl_.dir) >= sizeOfAry(ledAry))
+        ctrl_.dir = -ctrl_.dir;
+    ctrl_.idxActiveLed += ctrl_.dir;
+    
+    lbd_setLED(ledAry[ctrl_.idxActiveLed], /*isOn*/ true);
+
     return 0;
 
 } /* End of bsw_taskUser100ms */
@@ -650,9 +680,6 @@ int32_t bsw_taskUser100ms(uint32_t PID ATTRIB_DBG_ONLY, uint32_t taskParam ATTRI
 int32_t bsw_taskUser1000ms(uint32_t PID ATTRIB_DBG_ONLY, uint32_t taskParam ATTRIB_UNUSED)
 {
     assert(PID == bsw_pidUser);
-
-    static bool SDATA_P1(isOn_) = false;
-    lbd_setLED(lbd_led_7_DS4, isOn_=!isOn_);
 
     /* Report CPU load. */
     static uint8_t SDATA_P1(cntCycles_) = 0u;
