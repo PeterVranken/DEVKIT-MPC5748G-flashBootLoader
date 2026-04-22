@@ -664,10 +664,10 @@ the board.
 Reset 3 allows convenient firmware update of the board. In particular, if
 the application supports CAN communication and if the trigger for this
 reset can be demanded by CAN, then a customized flash tool can first
-communicate with the application, demand reset 3, and can then start the
-CCP communication with the meanwhile started FBL for re-programming the
-application. The entire process "Update firmware" appears to the user as a
-simple and robust operation.
+communicate with the application, let it demand reset 3, and can then
+start the CCP communication with the meanwhile started FBL for
+re-programming the application. The entire process "Update firmware"
+appears to the user as a simple and seamlessy operation.
 
 === How to trigger reset 3 from an application
 
@@ -682,18 +682,18 @@ the startup code of the FBL can evaluate the flag after the reset. The
 application needs to:
 
 1. Suspend all interrupts.
-2. Write the magic word 0xDEADBEEF into the first 32 Bit word at the
+2. Write the magic word 0xDeadBeef into the first 32 Bit word at the
    beginning of the used RAM, i.e., at 0x40000000.
 3. Write the command flag into the next 32 Bit address, i.e., at
    0x40000004. The command flag to go into and remain in the FBL after
-   reset is 0xADEAFBEE.
+   reset is 0xADeafBee.
 4. Command the mode transition into RESET at the Mode Entry Module.
 
 Suspending all interrupts is important insofar as otherwise the RAM
-manipulation in the next steps can have any unforeseen harmful effect if
-some other code entity would still execute. An alternative would be
-ensuring by memory partitioning that the first 8 Byte of RAM are never and
-nowhere used in the application.
+manipulation in the 2nd and 3rd step can have any unforeseen harmful
+effect if some other code entity would still execute. An alternative would
+be ensuring by memory partitioning that the first 8 Byte of RAM are never
+and nowhere used in the application.
 
 Here is how the FBL implements it (file
 `code/system/drivers/boot/swr_softwareReset.c`):
