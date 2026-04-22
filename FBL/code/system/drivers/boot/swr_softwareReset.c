@@ -40,7 +40,7 @@
 
 /* Include the appropriate MCU header. */
 #if defined(MCU_MPC5748G)
-#include "MPC5748G.h"
+# include "MPC5748G.h"
 #elif defined(MCU_MPC5775B)
 # include "MPC5775B.h"
 #elif defined(MCU_MPC5775E)

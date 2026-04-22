@@ -157,8 +157,8 @@ uint32_t fbh_findApplication(uint32_t * const pTiWaitForCcpInMs)
     #define OFFS_ADDR_APPL                  1
     #define OFFS_TI_WAIT_FOR_CCP_CONNECT    2
     #define OFFS_PTR_TO_MAGIC               3
+    #define MASK_KNOWN_HDR_CFG_BITS         0xFFFFFFFFu
     #define EXPECTED_HDR_CFG_BITS           0xADeafBee
-    #define EXPECTED_HDR_CFG_BITS           0xFFFFFFFFu
     
 #elif defined(MCU_MPC5777C)
 # error Implement fbh_findApplication for MPC5777C
